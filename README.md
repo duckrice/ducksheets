@@ -3,15 +3,18 @@
 A free spreadsheet for Windows that opens and saves Excel workbooks (.xlsx, .xlsm) and CSV files.
 
 - **Excel files that stay Excel files.** Formulas, formats, column widths, merged cells, frozen panes, filters and charts are read and written as Excel keeps them. Anything DuckSheets doesn't edit yet stays in the file unchanged: conditional formatting, comments, pictures, other kinds of chart, print settings.
-- **Formulas.** About 110 of Excel's functions:
-  - SUM, AVERAGE, COUNT, MIN/MAX, ROUND;
-  - IF, IFS, IFERROR, AND/OR;
+- **Formulas.** About 260 of Excel's functions, checked against the real Excel:
+  - SUM, AVERAGE, COUNT, MIN/MAX, ROUND, SUBTOTAL;
+  - IF, IFS, IFERROR, AND/OR, LET;
   - the conditional family: SUMIF(S), COUNTIF(S), AVERAGEIF(S), MAXIFS/MINIFS;
-  - lookups: VLOOKUP/HLOOKUP, XLOOKUP, INDEX/MATCH, OFFSET, INDIRECT;
-  - text: LEFT/RIGHT/MID, CONCAT, TEXTJOIN, TEXT, SUBSTITUTE, FIND/SEARCH;
-  - dates: TODAY, DATE, EDATE/EOMONTH, DATEDIF, NETWORKDAYS, WEEKDAY, ISOWEEKNUM;
-  - statistics: MEDIAN, STDEV, PERCENTILE, RANK;
-  - money: PMT, FV, PV, NPV;
+  - lookups: VLOOKUP/HLOOKUP, XLOOKUP, INDEX/MATCH, LOOKUP, OFFSET, INDIRECT;
+  - dynamic arrays: FILTER, SORT, SORTBY, UNIQUE, SEQUENCE, TAKE, DROP, VSTACK, HSTACK, CHOOSECOLS;
+  - text: LEFT/RIGHT/MID, CONCAT, TEXTJOIN, TEXT, SUBSTITUTE, FIND/SEARCH, TEXTBEFORE/TEXTAFTER, TEXTSPLIT;
+  - dates: TODAY, DATE, EDATE/EOMONTH, DATEDIF, NETWORKDAYS, WEEKDAY, ISOWEEKNUM, YEARFRAC;
+  - maths and trigonometry: SIN/COS/TAN and their inverses, GCD, LCM, MROUND, COMBIN;
+  - statistics: MEDIAN, STDEV, PERCENTILE, RANK, CORREL, SLOPE/INTERCEPT, FORECAST, NORM.DIST/NORM.INV, BINOM.DIST;
+  - money: PMT, FV, PV, NPV, IPMT/PPMT, RATE, NPER, IRR, XNPV/XIRR;
+  - engineering: DEC2BIN/HEX2DEC and the other number bases, BITAND/BITXOR, and complex numbers (IMSUM, IMPRODUCT, IMABS…);
   - and more.
 - **References.** Relative, `$` absolute, other sheets and named ranges. Arguments can be separated with `,` or `;`, as in Norwegian Excel.
 - **Typing like Excel:**

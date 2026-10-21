@@ -52,6 +52,8 @@ export interface EvalContext {
   date1904: boolean;
   /** Inside functions that take arrays (FILTER, SORT, SUMPRODUCT…): A1:A9>5 compares every cell, giving an array. */
   arrays?: boolean;
+  /** Names given with LET, by name in capitals. */
+  local?: Map<string, Value>;
 }
 
 export const err = (code: CellError["code"]) => new CellError(code);
@@ -87,6 +89,8 @@ export function evaluate(node: Node, ctx: EvalContext): Value {
     }
     case "name": {
       if (!node.name) return null; // a missing argument
+      const own = ctx.local?.get(node.name.toUpperCase());
+      if (own !== undefined) return own;
       const text = ctx.name(node.name.toUpperCase());
       if (text === undefined) return err("#NAME?");
       try {

@@ -227,7 +227,7 @@ export function parse(text: string): Node {
         }
         const upper = tok.v.toUpperCase();
         if (upper === "TRUE" || upper === "FALSE") return { t: "bool", v: upper === "TRUE" };
-        return { t: "name", name: tok.v };
+        return { t: "name", name: tok.v.replace(/^_xlpm\./i, "") };
       }
       default:
         throw new FormulaError(tok.k === "end" ? "The formula stops too early" : `Unexpected ${tok.k === "sep" ? "separator" : tok.k}`);
@@ -267,12 +267,15 @@ const refText = (r: CellRef) => `${r.ac ? "$" : ""}${colName(r.c)}${r.ar ? "$" :
 /** Functions newer than Excel 2007, written with Excel's _xlfn. prefix in files. */
 export const NEW_FUNCTIONS = new Set([
   "XLOOKUP", "XMATCH", "IFS", "SWITCH", "CONCAT", "TEXTJOIN", "MAXIFS", "MINIFS", "IFNA", "XOR", "STDEV.S", "STDEV.P", "VAR.S", "VAR.P",
-  "DAYS", "ISOWEEKNUM", "FILTER", "SORT", "SORTBY", "UNIQUE", "SEQUENCE", "LET", "CEILING.MATH", "FLOOR.MATH", "MODE.SNGL", "RANK.EQ", "PERCENTILE.INC", "QUARTILE.INC",
+  "DAYS", "ISOWEEKNUM", "FILTER", "SORT", "SORTBY", "UNIQUE", "SEQUENCE", "LET",
+  "BITAND", "BITOR", "BITXOR", "BITLSHIFT", "BITRSHIFT", "BASE", "DECIMAL", "COVARIANCE.S", "COVARIANCE.P", "FORECAST.LINEAR",
+  "NORM.S.DIST", "NORM.DIST", "NORM.INV", "NORM.S.INV", "BINOM.DIST", "POISSON.DIST", "EXPON.DIST", "RANK.AVG", "PERCENTRANK.INC",
+  "TEXTBEFORE", "TEXTAFTER", "TEXTSPLIT", "UNICHAR", "UNICODE", "CHOOSECOLS", "CHOOSEROWS", "TAKE", "DROP", "VSTACK", "HSTACK", "CEILING.MATH", "FLOOR.MATH", "MODE.SNGL", "RANK.EQ", "PERCENTILE.INC", "QUARTILE.INC",
 ]);
 
 /** The tree as formula text (without "="). `forFile` adds the prefixes Excel's files use. */
-export function print(node: Node, forFile = false): string {
-  const p = (n: Node) => print(n, forFile);
+export function print(node: Node, forFile = false, params?: Set<string>): string {
+  const p = (n: Node) => print(n, forFile, params);
   switch (node.t) {
     case "num":
       return String(node.v).replace("e+", "E+").replace("e-", "E-");
@@ -291,8 +294,13 @@ export function print(node: Node, forFile = false): string {
       return `${prefix}${refText(node.a)}:${refText(node.b)}`;
     }
     case "name":
-      return node.name;
+      // In files, LET's names are written _xlpm.name.
+      return forFile && params?.has(node.name.toUpperCase()) ? `_xlpm.${node.name}` : node.name;
     case "fn":
+      if (forFile && node.name === "LET") {
+        const names = new Set([...(params ?? []), ...node.args.filter((a, i) => i % 2 === 0 && i < node.args.length - 1 && a.t === "name").map((a) => (a as { name: string }).name.toUpperCase())]);
+        return `_xlfn.LET(${node.args.map((a) => print(a, true, names)).join(",")})`;
+      }
       return `${forFile && NEW_FUNCTIONS.has(node.name) ? (node.name === "FILTER" || node.name === "SORT" ? "_xlfn._xlws." : "_xlfn.") : ""}${node.name}(${node.args.map(p).join(",")})`;
     case "un":
       return `${node.op}${p(node.e)}`;

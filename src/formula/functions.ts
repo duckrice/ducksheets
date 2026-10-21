@@ -536,12 +536,12 @@ def("COLUMN", (args, ctx) => {
   return isErr(r) ? r : r.c1 + 1;
 });
 def("ROWS", (args, ctx) => {
-  const r = range(args[0], ctx);
-  return isErr(r) ? r : r.rows;
+  const v = ev(args[0], ctx);
+  return v instanceof RangeValue || v instanceof ArrayValue ? v.rows : isErr(v) ? v : 1;
 });
 def("COLUMNS", (args, ctx) => {
-  const r = range(args[0], ctx);
-  return isErr(r) ? r : r.cols;
+  const v = ev(args[0], ctx);
+  return v instanceof RangeValue || v instanceof ArrayValue ? v.cols : isErr(v) ? v : 1;
 });
 def("OFFSET", (args, ctx) => {
   const r = range(args[0], ctx);
@@ -969,6 +969,673 @@ def("SEQUENCE", (args, ctx) => {
 });
 
 def("TRANSPOSE", (args, ctx) => new ArrayValue(transpose(grid(args[0], ctx))));
+
+// ---- maths and trigonometry -------------------------------------------------------------------
+
+const finite = (n: number) => (Number.isFinite(n) ? n : err("#NUM!"));
+math("SIN", (x) => Math.sin(x), 1);
+math("COS", (x) => Math.cos(x), 1);
+math("TAN", (x) => Math.tan(x), 1);
+math("ASIN", (x) => (Math.abs(x) > 1 ? err("#NUM!") : Math.asin(x)), 1);
+math("ACOS", (x) => (Math.abs(x) > 1 ? err("#NUM!") : Math.acos(x)), 1);
+math("ATAN", (x) => Math.atan(x), 1);
+math("ATAN2", (x, y) => (x === 0 && y === 0 ? err("#DIV/0!") : Math.atan2(y, x)), 2);
+math("SINH", (x) => finite(Math.sinh(x)), 1);
+math("COSH", (x) => finite(Math.cosh(x)), 1);
+math("TANH", (x) => Math.tanh(x), 1);
+math("DEGREES", (x) => (x * 180) / Math.PI, 1);
+math("RADIANS", (x) => (x * Math.PI) / 180, 1);
+math("SQRTPI", (x) => (x < 0 ? err("#NUM!") : Math.sqrt(x * Math.PI)), 1);
+math("MROUND", (x, m) => (m === 0 ? 0 : x * m < 0 ? err("#NUM!") : Math.round(x / m) * m), 2);
+const gcd = (a: number, b: number): number => (b ? gcd(b, a % b) : a);
+def("GCD", (args, ctx) => {
+  const ns = numbers(args, ctx);
+  if (isErr(ns)) return ns;
+  if (ns.some((n) => n < 0)) return err("#NUM!");
+  return ns.map(Math.trunc).reduce(gcd, 0);
+});
+def("LCM", (args, ctx) => {
+  const ns = numbers(args, ctx);
+  if (isErr(ns)) return ns;
+  if (ns.some((n) => n < 0)) return err("#NUM!");
+  return ns.map(Math.trunc).reduce((a, b) => (a && b ? (a / gcd(a, b)) * b : 0), 1);
+});
+const factorial = (n: number) => {
+  let f = 1;
+  for (let i = 2; i <= n; i++) f *= i;
+  return f;
+};
+math("COMBIN", (n, k) => (n < 0 || k < 0 || k > n ? err("#NUM!") : Math.round(factorial(Math.trunc(n)) / (factorial(Math.trunc(k)) * factorial(Math.trunc(n) - Math.trunc(k))))), 2);
+math("PERMUT", (n, k) => (n < 0 || k < 0 || k > n ? err("#NUM!") : Math.round(factorial(Math.trunc(n)) / factorial(Math.trunc(n) - Math.trunc(k)))), 2);
+
+// ---- number bases, for programmers ----------------------------------------------------------------
+
+/** A number in another base, with at least `places` digits; negative numbers as Excel writes them (two's complement in 10 digits). */
+function toBase(n: number, base: number, bits: number, places?: number): string | CellError {
+  const limit = 2 ** (bits - 1);
+  if (!Number.isInteger(n) || n < -limit || n >= limit) return err("#NUM!");
+  const text = (n < 0 ? 2 ** bits + n : n).toString(base).toUpperCase();
+  if (places === undefined || n < 0) return text;
+  return places < text.length ? err("#NUM!") : text.padStart(places, "0");
+}
+function fromBase(text: string, base: number, bits: number): number | CellError {
+  if (!text || text.length > 10 || !new RegExp(`^[0-${Math.min(base, 10) - 1}${base > 10 ? "A-Fa-f" : ""}]+$`).test(text)) return err("#NUM!");
+  const n = parseInt(text, base);
+  // Ten digits with the top bit set are negative, as in Excel.
+  return text.length === 10 && n >= 2 ** (bits - 1) ? n - 2 ** bits : n;
+}
+const BASES: [string, number, number][] = [
+  ["BIN", 2, 10],
+  ["OCT", 8, 30],
+  ["HEX", 16, 40],
+];
+for (const [from, fromRadix, fromBits] of BASES) {
+  def(`${from}2DEC`, (args, ctx) => fromBase(toText(one(args[0], ctx)).trim(), fromRadix, fromBits));
+  def(`DEC2${from}`, (args, ctx) => {
+    const n = num(args[0], ctx);
+    const places = missing(args[1]) ? undefined : num(args[1], ctx);
+    if (isErr(n)) return n;
+    if (isErr(places as number | CellError)) return places as CellError;
+    return toBase(Math.trunc(n), fromRadix, fromBits, places as number | undefined);
+  });
+  for (const [to, toRadix, toBits] of BASES) {
+    if (to === from) continue;
+    def(`${from}2${to}`, (args, ctx) => {
+      const n = fromBase(toText(one(args[0], ctx)).trim(), fromRadix, fromBits);
+      const places = missing(args[1]) ? undefined : num(args[1], ctx);
+      if (isErr(n)) return n;
+      if (isErr(places as number | CellError)) return places as CellError;
+      return toBase(n, toRadix, toBits, places as number | undefined);
+    });
+  }
+}
+def("BASE", (args, ctx) => {
+  const n = num(args[0], ctx);
+  const radix = num(args[1], ctx);
+  const length = num(args[2], ctx, 0);
+  for (const v of [n, radix, length]) if (isErr(v)) return v;
+  if ((n as number) < 0 || (radix as number) < 2 || (radix as number) > 36) return err("#NUM!");
+  return Math.trunc(n as number).toString(radix as number).toUpperCase().padStart(length as number, "0");
+});
+def("DECIMAL", (args, ctx) => {
+  const text = toText(one(args[0], ctx)).trim();
+  const radix = num(args[1], ctx);
+  if (isErr(radix)) return radix;
+  const n = parseInt(text, radix);
+  return radix < 2 || radix > 36 || Number.isNaN(n) || n.toString(radix).toUpperCase() !== text.replace(/^0+(?=.)/, "").toUpperCase() ? err("#NUM!") : n;
+});
+const bits = (f: (a: bigint, b: bigint) => bigint) => (args: Node[], ctx: EvalContext) => {
+  const a = num(args[0], ctx);
+  const b = num(args[1], ctx);
+  if (isErr(a)) return a;
+  if (isErr(b)) return b;
+  if (a < 0 || !Number.isInteger(a) || a >= 2 ** 48) return err("#NUM!");
+  return Number(f(BigInt(a), BigInt(Math.trunc(b))));
+};
+def("BITAND", bits((a, b) => a & b));
+def("BITOR", bits((a, b) => a | b));
+def("BITXOR", bits((a, b) => a ^ b));
+def("BITLSHIFT", bits((a, s) => (s >= 0n ? a << s : a >> -s)));
+def("BITRSHIFT", bits((a, s) => (s >= 0n ? a >> s : a << -s)));
+
+// ---- statistics ---------------------------------------------------------------------------------
+
+/** Two ranges' numbers, in pairs where both are numbers, as Excel's regression functions take them. */
+function pairs(args: Node[], ctx: EvalContext): [number[], number[]] | CellError {
+  const ys = values([args[0]], ctx);
+  const xs = values([args[1]], ctx);
+  if (ys.length !== xs.length) return err("#N/A");
+  const y: number[] = [];
+  const x: number[] = [];
+  ys.forEach((v, i) => {
+    if (typeof v === "number" && typeof xs[i] === "number") {
+      y.push(v);
+      x.push(xs[i] as number);
+    }
+  });
+  return [y, x];
+}
+const avg = (ns: number[]) => ns.reduce((s, n) => s + n, 0) / ns.length;
+/** Slope and intercept of the least-squares line through the points. */
+function line(args: Node[], ctx: EvalContext): { slope: number; intercept: number; y: number[]; x: number[] } | CellError {
+  const p = pairs(args, ctx);
+  if (isErr(p)) return p;
+  const [y, x] = p;
+  if (y.length < 2) return err("#DIV/0!");
+  const mx = avg(x);
+  const my = avg(y);
+  const sxx = x.reduce((s, v) => s + (v - mx) ** 2, 0);
+  if (!sxx) return err("#DIV/0!");
+  const slope = x.reduce((s, v, i) => s + (v - mx) * (y[i] - my), 0) / sxx;
+  return { slope, intercept: my - slope * mx, y, x };
+}
+def("SLOPE", (args, ctx) => {
+  const l = line(args, ctx);
+  return isErr(l) ? l : l.slope;
+});
+def("INTERCEPT", (args, ctx) => {
+  const l = line(args, ctx);
+  return isErr(l) ? l : l.intercept;
+});
+def("FORECAST FORECAST.LINEAR", (args, ctx) => {
+  const x = num(args[0], ctx);
+  if (isErr(x)) return x;
+  const l = line([args[1], args[2]], ctx);
+  return isErr(l) ? l : l.intercept + l.slope * x;
+});
+def("CORREL PEARSON", (args, ctx) => {
+  const p = pairs(args, ctx);
+  if (isErr(p)) return p;
+  const [y, x] = p;
+  const my = avg(y);
+  const mx = avg(x);
+  const sxy = x.reduce((s, v, i) => s + (v - mx) * (y[i] - my), 0);
+  const sxx = x.reduce((s, v) => s + (v - mx) ** 2, 0);
+  const syy = y.reduce((s, v) => s + (v - my) ** 2, 0);
+  return sxx && syy ? sxy / Math.sqrt(sxx * syy) : err("#DIV/0!");
+});
+def("RSQ", (args, ctx) => {
+  const r = fns.CORREL(args, ctx);
+  return typeof r === "number" ? r * r : r;
+});
+const covariance = (sample: boolean) => (args: Node[], ctx: EvalContext) => {
+  const p = pairs(args, ctx);
+  if (isErr(p)) return p;
+  const [y, x] = p;
+  if (y.length < (sample ? 2 : 1)) return err("#DIV/0!");
+  const my = avg(y);
+  const mx = avg(x);
+  return x.reduce((s, v, i) => s + (v - mx) * (y[i] - my), 0) / (y.length - (sample ? 1 : 0));
+};
+def("COVARIANCE.S", covariance(true));
+def("COVARIANCE.P COVAR", covariance(false));
+stat("GEOMEAN", (ns) => !ns.length ? err("#DIV/0!") : (ns.some((n) => n <= 0) ? err("#NUM!") : Math.exp(avg(ns.map(Math.log)))));
+stat("HARMEAN", (ns) => !ns.length ? err("#DIV/0!") : (ns.some((n) => n <= 0) ? err("#NUM!") : ns.length / ns.reduce((s, n) => s + 1 / n, 0)));
+stat("DEVSQ", (ns) => !ns.length ? err("#DIV/0!") : ns.reduce((s, n) => s + (n - avg(ns)) ** 2, 0));
+stat("AVEDEV", (ns) => !ns.length ? err("#DIV/0!") : avg(ns.map((n) => Math.abs(n - avg(ns)))));
+const sd = (ns: number[]) => Math.sqrt(ns.reduce((s, n) => s + (n - avg(ns)) ** 2, 0) / (ns.length - 1));
+stat("SKEW", (ns) => !ns.length ? err("#DIV/0!") : (ns.length < 3 ? err("#DIV/0!") : (ns.length / ((ns.length - 1) * (ns.length - 2))) * ns.reduce((s, n) => s + ((n - avg(ns)) / sd(ns)) ** 3, 0)));
+stat("KURT", (ns) => {
+  const n = ns.length;
+  if (n < 4) return err("#DIV/0!");
+  const s4 = ns.reduce((s, v) => s + ((v - avg(ns)) / sd(ns)) ** 4, 0);
+  return ((n * (n + 1)) / ((n - 1) * (n - 2) * (n - 3))) * s4 - (3 * (n - 1) ** 2) / ((n - 2) * (n - 3));
+});
+/** Text and TRUE/FALSE counted too (text as 0, TRUE as 1), as the …A functions do. */
+const statA = (names: string, f: (ns: number[]) => number) =>
+  def(names, (args, ctx) => {
+    const ns = values(args, ctx)
+      .filter((v) => v !== null)
+      .map((v) => (typeof v === "number" ? v : v === true ? 1 : 0));
+    return ns.length ? f(ns) : 0;
+  });
+statA("AVERAGEA", avg);
+statA("MAXA", (ns) => Math.max(...ns));
+statA("MINA", (ns) => Math.min(...ns));
+math("STANDARDIZE", (x, m, s) => (s <= 0 ? err("#NUM!") : (x - m) / s), 3);
+
+/** The standard normal distribution: its cumulative probability (an approximation good to 1e-7). */
+function normCdf(z: number): number {
+  const t = 1 / (1 + 0.2316419 * Math.abs(z));
+  const d = 0.3989422804014327 * Math.exp((-z * z) / 2);
+  const p = d * t * (0.31938153 + t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429))));
+  return z >= 0 ? 1 - p : p;
+}
+/** Its inverse (Acklam's algorithm). */
+function normInv(p: number): number {
+  const a = [-39.69683028665376, 220.9460984245205, -275.9285104469687, 138.357751867269, -30.66479806614716, 2.506628277459239];
+  const b = [-54.47609879822406, 161.5858368580409, -155.6989798598866, 66.80131188771972, -13.28068155288572];
+  const c = [-0.007784894002430293, -0.3223964580411365, -2.400758277161838, -2.549732539343734, 4.374664141464968, 2.938163982698783];
+  const d = [0.007784695709041462, 0.3224671290700398, 2.445134137142996, 3.754408661907416];
+  const lo = 0.02425;
+  if (p < lo) {
+    const q = Math.sqrt(-2 * Math.log(p));
+    return (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1);
+  }
+  if (p > 1 - lo) return -normInv(1 - p);
+  const q = p - 0.5;
+  const r = q * q;
+  return ((((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q) / (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1);
+}
+def("NORM.S.DIST", (args, ctx) => {
+  const z = num(args[0], ctx);
+  if (isErr(z)) return z;
+  const cumulative = toBool(one(args[1], ctx));
+  return cumulative === false ? Math.exp((-z * z) / 2) / Math.sqrt(2 * Math.PI) : normCdf(z);
+});
+def("NORM.DIST NORMDIST", (args, ctx) => {
+  const [x, m, s] = [num(args[0], ctx), num(args[1], ctx), num(args[2], ctx)];
+  for (const v of [x, m, s]) if (isErr(v)) return v;
+  if ((s as number) <= 0) return err("#NUM!");
+  const z = ((x as number) - (m as number)) / (s as number);
+  return toBool(one(args[3], ctx)) === false ? Math.exp((-z * z) / 2) / ((s as number) * Math.sqrt(2 * Math.PI)) : normCdf(z);
+});
+math("NORM.S.INV NORMSINV", (p) => (p <= 0 || p >= 1 ? err("#NUM!") : normInv(p)), 1);
+math("NORM.INV NORMINV", (p, m, s) => (p <= 0 || p >= 1 || s <= 0 ? err("#NUM!") : m + s * normInv(p)), 3);
+def("BINOM.DIST BINOMDIST", (args, ctx) => {
+  const [k, n, p] = [num(args[0], ctx), num(args[1], ctx), num(args[2], ctx)];
+  for (const v of [k, n, p]) if (isErr(v)) return v;
+  const [kk, nn, pp] = [Math.trunc(k as number), Math.trunc(n as number), p as number];
+  if (kk < 0 || kk > nn || pp < 0 || pp > 1) return err("#NUM!");
+  const pmf = (i: number) => (factorial(nn) / (factorial(i) * factorial(nn - i))) * pp ** i * (1 - pp) ** (nn - i);
+  if (toBool(one(args[3], ctx)) !== true) return pmf(kk);
+  let total = 0;
+  for (let i = 0; i <= kk; i++) total += pmf(i);
+  return total;
+});
+def("POISSON.DIST POISSON", (args, ctx) => {
+  const [x, m] = [num(args[0], ctx), num(args[1], ctx)];
+  if (isErr(x)) return x;
+  if (isErr(m)) return m;
+  const k = Math.trunc(x);
+  if (k < 0 || m < 0) return err("#NUM!");
+  const pmf = (i: number) => (Math.exp(-m) * m ** i) / factorial(i);
+  if (toBool(one(args[2], ctx)) !== true) return pmf(k);
+  let total = 0;
+  for (let i = 0; i <= k; i++) total += pmf(i);
+  return total;
+});
+def("EXPON.DIST EXPONDIST", (args, ctx) => {
+  const [x, l] = [num(args[0], ctx), num(args[1], ctx)];
+  if (isErr(x)) return x;
+  if (isErr(l)) return l;
+  if (x < 0 || l <= 0) return err("#NUM!");
+  return toBool(one(args[2], ctx)) === true ? 1 - Math.exp(-l * x) : l * Math.exp(-l * x);
+});
+def("RANK.AVG", (args, ctx) => {
+  const x = num(args[0], ctx);
+  const ns = numbers([args[1]], ctx);
+  if (isErr(x)) return x;
+  if (isErr(ns)) return ns;
+  const up = !missing(args[2]) && toNumber(one(args[2], ctx)) !== 0;
+  const same = ns.filter((n) => n === x).length;
+  if (!same) return err("#N/A");
+  const before = ns.filter((n) => (up ? n < x : n > x)).length;
+  return before + (same + 1) / 2;
+});
+def("PERCENTRANK PERCENTRANK.INC", (args, ctx) => {
+  const ns = numbers([args[0]], ctx);
+  const x = num(args[1], ctx);
+  const digits = num(args[2], ctx, 3);
+  if (isErr(ns)) return ns;
+  if (isErr(x)) return x;
+  if (isErr(digits)) return digits;
+  const sorted = [...ns].sort((a, b) => a - b);
+  if (!sorted.length || x < sorted[0] || x > sorted[sorted.length - 1]) return err("#N/A");
+  let i = sorted.findIndex((n) => n >= x);
+  const rank = sorted[i] === x ? sorted.indexOf(x) : i - 1 + (x - sorted[i - 1]) / (sorted[i] - sorted[i - 1]);
+  i = 10 ** digits;
+  return Math.floor((rank / (sorted.length - 1)) * i) / i;
+});
+
+// ---- money ---------------------------------------------------------------------------------
+
+/** The payment for a loan or saving: rate per period, periods, present and future value, paid at the start (1) or end (0). */
+const payment = (rate: number, n: number, pv: number, fv: number, type: number) =>
+  rate === 0 ? -(pv + fv) / n : (-(pv * (1 + rate) ** n + fv) * rate) / ((1 + rate * type) * ((1 + rate) ** n - 1));
+/** The balance after n periods, in Excel's signs (FV). */
+const balanceAfter = (rate: number, n: number, pmt: number, pv: number, type: number) =>
+  rate === 0 ? -(pv + pmt * n) : -(pv * (1 + rate) ** n + (pmt * (1 + rate * type) * ((1 + rate) ** n - 1)) / rate);
+/** The interest in one period's payment: the balance at its start times the rate (none in the first, when paying in advance). */
+function interestPart(rate: number, per: number, n: number, pv: number, fv: number, type: number): number {
+  const pmt = payment(rate, n, pv, fv, type);
+  const interest = balanceAfter(rate, per - 1, pmt, pv, type) * rate;
+  if (!type) return interest;
+  return per === 1 ? 0 : interest / (1 + rate);
+}
+const loanArgs = (args: Node[], ctx: EvalContext, from: number) => {
+  const out = [num(args[from], ctx), num(args[from + 1], ctx), num(args[from + 2], ctx), num(args[from + 3], ctx, 0), num(args[from + 4], ctx, 0)];
+  const bad = out.find(isErr);
+  return bad ? (bad as CellError) : (out as number[]);
+};
+def("IPMT", (args, ctx) => {
+  const rate = num(args[0], ctx);
+  const l = loanArgs(args, ctx, 1);
+  if (isErr(rate)) return rate;
+  if (isErr(l)) return l;
+  const [per, n, pv, fv, type] = l;
+  if (per < 1 || per > n) return err("#NUM!");
+  return interestPart(rate, per, n, pv, fv, type);
+});
+def("PPMT", (args, ctx) => {
+  const rate = num(args[0], ctx);
+  const l = loanArgs(args, ctx, 1);
+  if (isErr(rate)) return rate;
+  if (isErr(l)) return l;
+  const [per, n, pv, fv, type] = l;
+  if (per < 1 || per > n) return err("#NUM!");
+  return payment(rate, n, pv, fv, type) - interestPart(rate, per, n, pv, fv, type);
+});
+def("NPER", (args, ctx) => {
+  const [rate, pmt, pv, fv, type] = [num(args[0], ctx), num(args[1], ctx), num(args[2], ctx), num(args[3], ctx, 0), num(args[4], ctx, 0)];
+  for (const v of [rate, pmt, pv, fv, type]) if (isErr(v)) return v;
+  const [r, p, v0, v1, t] = [rate, pmt, pv, fv, type] as number[];
+  if (r === 0) return p === 0 ? err("#NUM!") : -(v0 + v1) / p;
+  const a = p * (1 + r * t) - v1 * r;
+  const b = v0 * r + p * (1 + r * t);
+  return a / b <= 0 ? err("#NUM!") : Math.log(a / b) / Math.log(1 + r);
+});
+/** Finds where f is 0 by Newton's method, from a guess. */
+function solve(f: (x: number) => number, guess: number): number | CellError {
+  let x = guess;
+  for (let i = 0; i < 100; i++) {
+    const y = f(x);
+    const dy = (f(x + 1e-7) - y) / 1e-7;
+    if (!Number.isFinite(dy) || dy === 0) break;
+    const next = x - y / dy;
+    if (Math.abs(next - x) < 1e-10) return next;
+    x = next;
+  }
+  return Math.abs(f(x)) < 1e-6 ? x : err("#NUM!");
+}
+def("RATE", (args, ctx) => {
+  const [n, pmt, pv, fv, type, guess] = [num(args[0], ctx), num(args[1], ctx), num(args[2], ctx), num(args[3], ctx, 0), num(args[4], ctx, 0), num(args[5], ctx, 0.1)];
+  for (const v of [n, pmt, pv, fv, type, guess]) if (isErr(v)) return v;
+  const [N, P, V0, V1, T] = [n, pmt, pv, fv, type] as number[];
+  return solve((r) => (Math.abs(r) < 1e-12 ? V0 + P * N + V1 : V0 * (1 + r) ** N + P * (1 + r * T) * (((1 + r) ** N - 1) / r) + V1), guess as number);
+});
+def("IRR", (args, ctx) => {
+  const flows = numbers([args[0]], ctx);
+  const guess = num(args[1], ctx, 0.1);
+  if (isErr(flows)) return flows;
+  if (isErr(guess)) return guess;
+  if (!flows.some((f) => f > 0) || !flows.some((f) => f < 0)) return err("#NUM!");
+  return solve((r) => flows.reduce((s, f, i) => s + f / (1 + r) ** i, 0), guess);
+});
+def("XNPV", (args, ctx) => {
+  const rate = num(args[0], ctx);
+  const flows = numbers([args[1]], ctx);
+  const dates = numbers([args[2]], ctx);
+  if (isErr(rate)) return rate;
+  if (isErr(flows)) return flows;
+  if (isErr(dates)) return dates;
+  if (flows.length !== dates.length) return err("#NUM!");
+  return flows.reduce((s, f, i) => s + f / (1 + rate) ** ((dates[i] - dates[0]) / 365), 0);
+});
+def("XIRR", (args, ctx) => {
+  const flows = numbers([args[0]], ctx);
+  const dates = numbers([args[1]], ctx);
+  const guess = num(args[2], ctx, 0.1);
+  if (isErr(flows)) return flows;
+  if (isErr(dates)) return dates;
+  if (isErr(guess)) return guess;
+  if (flows.length !== dates.length || !flows.some((f) => f > 0) || !flows.some((f) => f < 0)) return err("#NUM!");
+  return solve((r) => flows.reduce((s, f, i) => s + f / (1 + r) ** ((dates[i] - dates[0]) / 365), 0), guess);
+});
+math("SLN", (cost, salvage, life) => (life === 0 ? err("#DIV/0!") : (cost - salvage) / life), 3);
+
+// ---- text ------------------------------------------------------------------------------------
+
+const around = (after: boolean): Fn => (args, ctx) => {
+  const text = toText(one(args[0], ctx));
+  const delim = toText(one(args[1], ctx));
+  const n = num(args[2], ctx, 1);
+  if (isErr(n)) return n;
+  if (!n) return err("#VALUE!");
+  const ignoreCase = !missing(args[3]) && toNumber(one(args[3], ctx)) === 1;
+  const hay = ignoreCase ? text.toLowerCase() : text;
+  const needle = ignoreCase ? delim.toLowerCase() : delim;
+  let at = -1;
+  if (n > 0) for (let i = 0, from = 0; i < n; i++, from = at + needle.length) at = hay.indexOf(needle, from);
+  else for (let i = 0, from = hay.length; i < -n; i++, from = at - 1) at = from < 0 ? -1 : hay.lastIndexOf(needle, from);
+  if (at < 0) return missing(args[5]) ? err("#N/A") : one(args[5], ctx);
+  return after ? text.slice(at + delim.length) : text.slice(0, at);
+};
+def("TEXTBEFORE", around(false));
+def("TEXTAFTER", around(true));
+def("TEXTSPLIT", (args, ctx) => {
+  const text = toText(one(args[0], ctx));
+  const cols = missing(args[1]) ? null : toText(one(args[1], ctx));
+  const rows = missing(args[2]) ? null : toText(one(args[2], ctx));
+  const lines = rows ? text.split(rows) : [text];
+  const grid2 = lines.map((line) => (cols ? line.split(cols) : [line]));
+  const width = Math.max(...grid2.map((r) => r.length));
+  return new ArrayValue(grid2.map((r) => Array.from({ length: width }, (_, j) => r[j] ?? err("#N/A"))));
+});
+def("UNICHAR", (args, ctx) => {
+  const n = num(args[0], ctx);
+  return isErr(n) ? n : n < 1 || n > 0x10ffff ? err("#VALUE!") : String.fromCodePoint(Math.trunc(n));
+});
+def("UNICODE", (args, ctx) => {
+  const t = toText(one(args[0], ctx));
+  return t ? t.codePointAt(0)! : err("#VALUE!");
+});
+def("FIXED", (args, ctx) => {
+  const n = num(args[0], ctx);
+  const d = num(args[1], ctx, 2);
+  if (isErr(n)) return n;
+  if (isErr(d)) return d;
+  const noCommas = !missing(args[2]) && toBool(one(args[2], ctx)) === true;
+  const rounded = Math.round(n * 10 ** d) / 10 ** d;
+  return formatValue(rounded, `${noCommas ? "0" : "#,##0"}${d > 0 ? `.${"0".repeat(d)}` : ""}`).text;
+});
+
+// ---- lookups, arrays and the rest ---------------------------------------------------------------
+
+def("LOOKUP", (args, ctx) => {
+  const x = one(args[0], ctx);
+  const look = grid(args[1], ctx);
+  const result = missing(args[2]) ? null : grid(args[2], ctx);
+  const vector = look.length === 1 || look[0].length === 1 ? look.flat() : look.length >= look[0].length ? look.map((r) => r[0]) : look[0];
+  let at = -1;
+  vector.forEach((v, i) => {
+    if (v !== null && compare(v, x) <= 0) at = i;
+  });
+  if (at < 0) return err("#N/A");
+  if (result) return result.flat()[at] ?? err("#N/A");
+  if (look.length === 1 || look[0].length === 1) return vector[at];
+  return look.length >= look[0].length ? look[at][look[0].length - 1] : look[look.length - 1][at];
+});
+def("ADDRESS", (args, ctx) => {
+  const r = num(args[0], ctx);
+  const c = num(args[1], ctx);
+  const abs = num(args[2], ctx, 1);
+  for (const v of [r, c, abs]) if (isErr(v)) return v;
+  if ((r as number) < 1 || (c as number) < 1) return err("#VALUE!");
+  let col = "";
+  for (let n = c as number; n > 0; n = Math.floor((n - 1) / 26)) col = String.fromCharCode(65 + ((n - 1) % 26)) + col;
+  const rowAbs = abs === 1 || abs === 2;
+  const colAbs = abs === 1 || abs === 3;
+  const sheet = missing(args[4]) ? "" : `${toText(one(args[4], ctx))}!`;
+  return `${sheet}${colAbs ? "$" : ""}${col}${rowAbs ? "$" : ""}${r}`;
+});
+const pick = (rowsWanted: boolean): Fn => (args, ctx) => {
+  const data = grid(args[0], ctx);
+  const size = rowsWanted ? data.length : data[0].length;
+  const out: Scalar[][] = [];
+  for (const a of args.slice(1)) {
+    const n = num(a, ctx);
+    if (isErr(n)) return n;
+    const i = n < 0 ? size + n : n - 1;
+    if (!n || i < 0 || i >= size) return err("#VALUE!");
+    out.push(rowsWanted ? data[i] : data.map((row) => row[i]));
+  }
+  return new ArrayValue(rowsWanted ? out : transpose(out));
+};
+def("CHOOSEROWS", pick(true));
+def("CHOOSECOLS", pick(false));
+const slice = (take: boolean): Fn => (args, ctx) => {
+  const data = grid(args[0], ctx);
+  const r = missing(args[1]) ? (take ? data.length : 0) : num(args[1], ctx);
+  const c = missing(args[2]) ? (take ? data[0].length : 0) : num(args[2], ctx);
+  if (isErr(r)) return r;
+  if (isErr(c)) return c;
+  const cut = <T,>(list: T[], n: number) => (take ? (n >= 0 ? list.slice(0, n) : list.slice(n)) : n >= 0 ? list.slice(n) : list.slice(0, n));
+  const rows = cut(data, r).map((row) => cut(row, c));
+  return rows.length && rows[0].length ? new ArrayValue(rows) : err("#CALC!");
+};
+def("TAKE", slice(true));
+def("DROP", slice(false));
+def("VSTACK", (args, ctx) => {
+  const parts = args.map((a) => grid(a, ctx));
+  const width = Math.max(...parts.map((p) => p[0].length));
+  return new ArrayValue(parts.flatMap((p) => p.map((row) => Array.from({ length: width }, (_, j) => (j < row.length ? row[j] : err("#N/A"))))));
+});
+def("HSTACK", (args, ctx) => {
+  const parts = args.map((a) => grid(a, ctx));
+  const height = Math.max(...parts.map((p) => p.length));
+  return new ArrayValue(Array.from({ length: height }, (_, i) => parts.flatMap((p) => (i < p.length ? p[i] : p[0].map(() => err("#N/A"))))));
+});
+def("TYPE", (args, ctx) => {
+  const v = ev(args[0], ctx);
+  if (v instanceof ArrayValue || (v instanceof RangeValue && v.rows * v.cols > 1)) return 64;
+  const s = scalar(v, ctx);
+  return typeof s === "number" || s === null ? 1 : typeof s === "string" ? 2 : typeof s === "boolean" ? 4 : 16;
+});
+def("YEARFRAC", (args, ctx) => {
+  const a = num(args[0], ctx);
+  const b = num(args[1], ctx);
+  const basis = num(args[2], ctx, 0);
+  for (const v of [a, b, basis]) if (isErr(v)) return v;
+  const [start, end] = [Math.min(a as number, b as number), Math.max(a as number, b as number)];
+  const d1 = serialToDate(start, ctx.date1904);
+  const d2 = serialToDate(end, ctx.date1904);
+  switch (basis) {
+    case 1:
+      return (end - start) / 365.25;
+    case 2:
+      return (end - start) / 360;
+    case 3:
+      return (end - start) / 365;
+    default: {
+      // 30/360 (US), Excel's default.
+      let [day1, day2] = [d1.getUTCDate(), d2.getUTCDate()];
+      if (day1 === 31) day1 = 30;
+      if (day2 === 31 && day1 === 30) day2 = 30;
+      return ((d2.getUTCFullYear() - d1.getUTCFullYear()) * 360 + (d2.getUTCMonth() - d1.getUTCMonth()) * 30 + (day2 - day1)) / 360;
+    }
+  }
+});
+def("DAYS360", (args, ctx) => {
+  const a = num(args[0], ctx);
+  const b = num(args[1], ctx);
+  if (isErr(a)) return a;
+  if (isErr(b)) return b;
+  const d1 = serialToDate(a, ctx.date1904);
+  const d2 = serialToDate(b, ctx.date1904);
+  let [day1, day2] = [d1.getUTCDate(), d2.getUTCDate()];
+  if (day1 === 31) day1 = 30;
+  if (day2 === 31 && day1 >= 30) day2 = 30;
+  return (d2.getUTCFullYear() - d1.getUTCFullYear()) * 360 + (d2.getUTCMonth() - d1.getUTCMonth()) * 30 + (day2 - day1);
+});
+
+/** SUBTOTAL: a summary that leaves out other SUBTOTALs (and, for 101–111, hidden rows), as under filters. */
+const SUBTOTALS: Record<number, string> = { 1: "AVERAGE", 2: "COUNT", 3: "COUNTA", 4: "MAX", 5: "MIN", 6: "PRODUCT", 7: "STDEV", 8: "STDEVP", 9: "SUM", 10: "VAR", 11: "VARP" };
+def("SUBTOTAL", (args, ctx) => {
+  const which = num(args[0], ctx);
+  if (isErr(which)) return which;
+  const name = SUBTOTALS[which > 100 ? which - 100 : which];
+  if (!name) return err("#VALUE!");
+  return fns[name](args.slice(1), ctx);
+});
+
+/** LET: names for values, used in the formula that follows. */
+def("LET", (args, ctx) => {
+  if (args.length < 3 || args.length % 2 === 0) return err("#VALUE!");
+  const local = new Map<string, Value>();
+  let inner: EvalContext = ctx;
+  for (let i = 0; i < args.length - 1; i += 2) {
+    const nameNode = args[i];
+    if (nameNode.t !== "name" || !nameNode.name) return err("#VALUE!");
+    local.set(nameNode.name.toUpperCase(), ev(args[i + 1], inner));
+    const outer = inner;
+    inner = { ...outer, local: new Map([...(outer.local ?? []), ...local]) };
+  }
+  return ev(args[args.length - 1], inner);
+});
+
+// ---- complex numbers, as text like "3+4i" (for electronics) ---------------------------------------
+
+type Complex = { re: number; im: number; unit: "i" | "j" };
+function readComplex(v: Scalar): Complex | CellError {
+  if (typeof v === "number") return { re: v, im: 0, unit: "i" };
+  const t = toText(v).replace(/\s+/g, "");
+  if (!t) return { re: 0, im: 0, unit: "i" };
+  const m = /^([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)?(?:([+-])((?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)?([ij]))?$/.exec(t);
+  const imOnly = /^([+-]?)((?:\d+\.?\d*|\.\d+)?)([ij])$/.exec(t);
+  if (imOnly) return { re: 0, im: Number(`${imOnly[1]}${imOnly[2] || "1"}`), unit: imOnly[3] as "i" };
+  if (!m || (!m[1] && !m[4])) return err("#NUM!");
+  return { re: Number(m[1] ?? 0), im: m[4] ? Number(`${m[2]}${m[3] ?? "1"}`) : 0, unit: (m[4] as "i") ?? "i" };
+}
+function writeComplex(c: Complex): string {
+  const round = (n: number) => Number(n.toPrecision(15));
+  const re = round(c.re);
+  const im = round(c.im);
+  if (!im) return String(re);
+  const imText = im === 1 ? "" : im === -1 ? "-" : String(im);
+  if (!re) return `${imText}${c.unit}`;
+  return `${re}${im > 0 ? "+" : ""}${imText}${c.unit}`;
+}
+const complexArgs = (args: Node[], ctx: EvalContext) => {
+  const out: Complex[] = [];
+  for (const v of values(args, ctx)) {
+    if (v === null) continue;
+    const c = readComplex(v);
+    if (isErr(c)) return c;
+    out.push(c);
+  }
+  return out;
+};
+def("COMPLEX", (args, ctx) => {
+  const re = num(args[0], ctx);
+  const im = num(args[1], ctx);
+  if (isErr(re)) return re;
+  if (isErr(im)) return im;
+  const unit = missing(args[2]) ? "i" : toText(one(args[2], ctx));
+  return unit !== "i" && unit !== "j" ? err("#VALUE!") : writeComplex({ re, im, unit });
+});
+const complexOne = (names: string, f: (c: Complex) => Scalar | Complex) =>
+  def(names, (args, ctx) => {
+    const c = readComplex(one(args[0], ctx));
+    if (isErr(c)) return c;
+    const out = f(c);
+    return out !== null && typeof out === "object" && "re" in out ? writeComplex(out) : (out as Scalar);
+  });
+complexOne("IMREAL", (c) => c.re);
+complexOne("IMAGINARY", (c) => c.im);
+complexOne("IMABS", (c) => Math.hypot(c.re, c.im));
+complexOne("IMARGUMENT", (c) => (c.re === 0 && c.im === 0 ? err("#DIV/0!") : Math.atan2(c.im, c.re)));
+complexOne("IMCONJUGATE", (c) => ({ ...c, im: -c.im }));
+complexOne("IMSQRT", (c) => {
+  const r = Math.sqrt(Math.hypot(c.re, c.im));
+  const a = Math.atan2(c.im, c.re) / 2;
+  return { re: r * Math.cos(a), im: r * Math.sin(a), unit: c.unit };
+});
+complexOne("IMEXP", (c) => ({ re: Math.exp(c.re) * Math.cos(c.im), im: Math.exp(c.re) * Math.sin(c.im), unit: c.unit }));
+complexOne("IMLN", (c) => (c.re === 0 && c.im === 0 ? err("#NUM!") : { re: Math.log(Math.hypot(c.re, c.im)), im: Math.atan2(c.im, c.re), unit: c.unit }));
+def("IMSUM", (args, ctx) => {
+  const cs = complexArgs(args, ctx);
+  return isErr(cs) ? cs : writeComplex(cs.reduce((s, c) => ({ re: s.re + c.re, im: s.im + c.im, unit: c.unit }), { re: 0, im: 0, unit: "i" } as Complex));
+});
+def("IMPRODUCT", (args, ctx) => {
+  const cs = complexArgs(args, ctx);
+  return isErr(cs) ? cs : writeComplex(cs.reduce((s, c) => ({ re: s.re * c.re - s.im * c.im, im: s.re * c.im + s.im * c.re, unit: c.unit }), { re: 1, im: 0, unit: "i" } as Complex));
+});
+def("IMSUB", (args, ctx) => {
+  const a = readComplex(one(args[0], ctx));
+  const b = readComplex(one(args[1], ctx));
+  if (isErr(a)) return a;
+  if (isErr(b)) return b;
+  return writeComplex({ re: a.re - b.re, im: a.im - b.im, unit: a.unit });
+});
+def("IMDIV", (args, ctx) => {
+  const a = readComplex(one(args[0], ctx));
+  const b = readComplex(one(args[1], ctx));
+  if (isErr(a)) return a;
+  if (isErr(b)) return b;
+  const d = b.re * b.re + b.im * b.im;
+  if (!d) return err("#NUM!");
+  return writeComplex({ re: (a.re * b.re + a.im * b.im) / d, im: (a.im * b.re - a.re * b.im) / d, unit: a.unit });
+});
+def("IMPOWER", (args, ctx) => {
+  const c = readComplex(one(args[0], ctx));
+  const p = num(args[1], ctx);
+  if (isErr(c)) return c;
+  if (isErr(p)) return p;
+  const r = Math.hypot(c.re, c.im) ** p;
+  const a = Math.atan2(c.im, c.re) * p;
+  return writeComplex({ re: r * Math.cos(a), im: r * Math.sin(a), unit: c.unit });
+});
 
 Object.assign(FUNCTIONS, fns);
 
