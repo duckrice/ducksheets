@@ -76,6 +76,18 @@ export class Calculator {
     return result;
   }
 
+  /** What a formula (without its "=") gives at a cell, as if it were there; for rules like conditional formatting. */
+  formulaValue(formula: string, sheet: number, r: number, c: number): Scalar {
+    const tree = this.tree(formula);
+    if (tree instanceof FormulaError) return new CellError("#NAME?");
+    try {
+      const ctx = this.context(sheet, r, c);
+      return scalar(evaluate(tree, ctx), ctx);
+    } catch {
+      return new CellError("#CALC!");
+    }
+  }
+
   /** Works out every formula, top to bottom, so long chains are worked out a step at a time. */
   all() {
     this.book.sheets.forEach((sheet, i) => {

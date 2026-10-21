@@ -88,6 +88,8 @@ const PATHS = {
   fillColor: '<path d="m5 13 7-8 7 8-7 6z"/><path d="M19 15s2 2.300 2 3.500a2 2 0 0 1-4 0c0-1.200 2-3.500 2-3.500z"/>',
   alignTop: '<path d="M5 4h14M12 20V8M8 12l4-4 4 4"/>',
   alignMiddle: '<path d="M5 12h14M12 3v6M12 21v-6M9 6l3 3 3-3M9 18l3-3 3 3"/>',
+  validation: '<rect x="3" y="5" width="13" height="6" rx="1"/><path d="m18.5 7 1.5 1.5L22 6"/><path d="M3 15h13M3 19h9"/>',
+  conditional: '<rect x="3" y="4" width="18" height="16" rx="1.5"/><path d="M3 10h18M9 4v16"/><path d="M12.5 13.5h5v3.5h-5z" fill="currentColor" stroke="none"/>',
   alignBottom: '<path d="M5 20h14M12 4v12M8 12l4 4 4-4"/>',
 } as const;
 

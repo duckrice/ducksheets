@@ -9,16 +9,17 @@ import { Grid } from "./grid";
 import { h, isTyping } from "./dom";
 import { icon } from "./icons";
 import { MAX_COLS, MAX_ROWS, inRange, key, mergeAt, rangeAddress } from "./model";
-import { dateToSerial, formatValue, locale } from "./numfmt";
+import { dateToSerial, formatValue, locale, parseInput } from "./numfmt";
 import { createToolbar, numberFormats, sumRange } from "./toolbar";
 import { readCsv, writeCsv } from "./csv";
 import { readXlsx } from "./xlsx/read";
 import { writeXlsx } from "./xlsx/write";
 import { lookOf } from "./xlsx/styles";
-import { askName, askSave, menu, popover, toast, type MenuItem } from "./ui";
+import { ask, askName, askSave, menu, popover, toast, type MenuItem } from "./ui";
 import { baseName, onCloseRequested, onFilesOpened, pickFile, pickSavePath, readPath, setTitle, startupFiles, writePath, type OpenedFile } from "./platform";
 import { offerUpdate } from "./updates";
 import { insertChart, renderCharts } from "./charts";
+import { allowed, describe as describeRule, listItems, validationAt } from "./validation";
 
 const app = document.getElementById("app")!;
 let doc: Doc;
@@ -47,13 +48,25 @@ function mount(next: Doc) {
   });
   editor = new Editor(doc, grid, {
     commit: (r, c, text, move, everywhere) => {
+      // A value the cell's data validation doesn't allow isn't put in, as in Excel.
+      const rule = validationAt(doc.sheet, r, c);
+      if (rule && !text.startsWith("=") && !allowed(rule, parseInput(text, doc.book.date1904).value, doc.active, doc.calc)) {
+        void ask("This value doesn't match the rules for this cell", `It takes ${describeRule(rule)}.`, "Try again").then((again) => {
+          if (again) editor.start(text);
+          else grid.el.focus({ preventScroll: true });
+        });
+        return;
+      }
       const range = selRange(doc.sel);
       if (everywhere && (range.r1 !== range.r2 || range.c1 !== range.c2)) doc.fillInput(range, text);
       else doc.setInput(r, c, text);
       moveAfterEntry(move);
       grid.el.focus({ preventScroll: true });
     },
-    changed: () => app.classList.toggle("editing", editor.active),
+    changed: () => {
+      app.classList.toggle("editing", editor.active);
+      placePick();
+    },
   });
   toolbar = createToolbar(doc, grid, {
     newBook: () => void newBook(),
@@ -75,6 +88,8 @@ function mount(next: Doc) {
     h("button", { type: "button", class: "tb", title: "Zoom in", "aria-label": "Zoom in", html: icon("zoomIn", 16), onclick: () => zoom(grid.zoom * 1.1) }),
   );
   app.replaceChildren(toolbar.el, editor.bar, grid.el, h("div", { class: "bottom" }, tabs, h("div", { class: "statusbar" }, status, summary, zoomBar)));
+  pick = h("button", { type: "button", class: "list-pick", hidden: true, title: "Choose from the list (Alt+Down)", "aria-label": "Choose from the list", html: icon("caret", 14), onmousedown: (e: Event) => e.preventDefault(), onclick: () => openPick() }) as HTMLButtonElement;
+  grid.el.append(pick);
   grid.el.addEventListener("keydown", keydown);
   // As in Excel, typing goes to the selected cell even after clicking a toolbar button.
   window.addEventListener("keydown", (e) => {
@@ -87,6 +102,7 @@ function mount(next: Doc) {
     "scroll",
     () => {
       editor.follow();
+      placePick();
       renderCharts(doc, grid);
     },
     true,
@@ -105,7 +121,29 @@ function mount(next: Doc) {
   grid.el.focus();
 }
 
+/** The drop-down button beside a cell with a list to choose from. */
+let pick: HTMLButtonElement;
+
+function placePick() {
+  const { r, c } = doc.sel;
+  const rule = validationAt(doc.sheet, r, c);
+  pick.hidden = rule?.t !== "list" || editor.active;
+  if (pick.hidden) return;
+  const box = grid.cellBox(r, c);
+  Object.assign(pick.style, { left: `${box.x + box.w + 1}px`, top: `${box.y + box.h - 18}px` });
+}
+
+function openPick() {
+  const { r, c } = doc.sel;
+  const rule = validationAt(doc.sheet, r, c);
+  if (rule?.t !== "list") return false;
+  const items = listItems(rule, doc.active, doc.calc);
+  menu(pick, items.length ? items.map((item) => ({ label: item, action: () => doc.setInput(r, c, item) })) : [{ label: "The list is empty" }]);
+  return true;
+}
+
 function refreshSelection() {
+  placePick();
   editor.show();
   toolbar.update();
   showSummary();
@@ -260,6 +298,7 @@ function keydown(e: KeyboardEvent) {
   const arrows: Record<string, [number, number]> = { ArrowDown: [1, 0], ArrowUp: [-1, 0], ArrowRight: [0, 1], ArrowLeft: [0, -1] };
   const done = () => e.preventDefault();
 
+  if (e.altKey && e.key === "ArrowDown" && openPick()) return done();
   if (arrows[e.key]) {
     const [dr, dc] = arrows[e.key];
     const from = e.shiftKey ? { r: doc.sel.ar, c: doc.sel.ac } : { r, c };

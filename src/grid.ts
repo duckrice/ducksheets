@@ -7,6 +7,7 @@ import { Doc, selRange } from "./doc";
 import { CellError, MAX_COLS, MAX_ROWS, colName, inRange, key, mergeAt, type Range } from "./model";
 import { formatValue } from "./numfmt";
 import { lookOf, type BorderSide } from "./xlsx/styles";
+import { conditionalEffects, readDxf, type CfEffect } from "./conditional";
 
 const HEADER_H = 22;
 const MIN_HEADER_W = 42;
@@ -130,10 +131,23 @@ export class Grid {
     this.refresh();
   }
 
+  /** What conditional formatting does to the sheet's cells, worked out when first needed after a change. */
+  private cf: Map<number, CfEffect> | null = null;
+
+  get effects(): Map<number, CfEffect> {
+    if (!this.cf) {
+      const sheet = this.doc.sheet;
+      const { styles } = this.doc.book;
+      this.cf = sheet.conditional.length ? conditionalEffects(sheet, this.doc.active, this.doc.calc, styles.dxfs.map((x) => readDxf(x, styles.theme))) : new Map();
+    }
+    return this.cf;
+  }
+
   // ---- sizes and positions ---------------------------------------------------------------------
 
   /** Picks up changes to the sheet: sizes, hidden rows, how far it reaches. */
   refresh() {
+    this.cf = null;
     const sheet = this.doc.sheet;
     this.rows = new Axis(sheet.defaultRowHeight, sheet.rowHeights, sheet.hiddenRows);
     this.cols = new Axis(sheet.defaultColWidth, sheet.colWidths, sheet.hiddenCols);
@@ -333,15 +347,23 @@ export class Grid {
     const top = this.y(r0);
     const bottom = this.y(r1) + this.rows.size(r1);
 
-    // Fills.
+    // Fills, then data bars, from the cell formats and conditional formatting.
+    const effects = this.effects;
     for (const r of visibleRows)
       for (const c of visibleCols) {
         const cell = sheet.cells.get(key(r, c));
-        if (!cell?.s) continue;
-        const fill = lookOf(styles, cell.s).fill;
+        if (!cell) continue;
+        const effect = effects.get(key(r, c));
+        const fill = effect?.fill ?? (cell.s ? lookOf(styles, cell.s).fill : null);
         if (fill) {
           ctx.fillStyle = fill;
           ctx.fillRect(this.x(c), this.y(r), this.cols.size(c), this.rows.size(r));
+        }
+        if (effect?.bar) {
+          ctx.globalAlpha = 0.75;
+          ctx.fillStyle = effect.bar.color;
+          ctx.fillRect(this.x(c) + 2, this.y(r) + 3, Math.max(1, (this.cols.size(c) - 4) * effect.bar.frac), this.rows.size(r) - 6);
+          ctx.globalAlpha = 1;
         }
       }
     // Gridlines.
@@ -466,7 +488,9 @@ export class Grid {
     const shown = formatValue(value, look.numFmt, this.doc.book.date1904);
     if (!shown.text) return;
     const ctx = this.ctx;
-    const font = look.font;
+    const effect = this.effects.get(key(r, c));
+    const font = effect ? { ...look.font, ...(effect.bold ? { bold: true } : {}), ...(effect.italic ? { italic: true } : {}) } : look.font;
+    if (effect?.color) shown.color = effect.color;
     const size = (font.size * 4) / 3;
     const css = `${font.italic ? "italic " : ""}${font.bold ? "bold " : ""}${size}px "${font.name}", "Segoe UI", sans-serif`;
     const box = merge ? this.box(merge) : { x: this.x(c), y: this.y(r), w: this.cols.size(c), h: this.rows.size(r) };

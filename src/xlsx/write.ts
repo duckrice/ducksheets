@@ -12,6 +12,8 @@ import { pxToWidth, readRels, relsPath, resolvePath } from "./read";
 import { lookOf, writeStyles } from "./styles";
 import { EMPTY_DRAWING, anchorXml, chartXml } from "./charts";
 import { chartData } from "../chartdata";
+import { conditionalXml } from "../conditional";
+import { validationsXml } from "../validation";
 
 const MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
 const REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
@@ -52,11 +54,10 @@ function setPart(doc: Document, name: string, xmlText: string | null) {
   const ws = doc.documentElement;
   for (const el of Array.from(ws.children)) if (el.localName === name) ws.removeChild(el);
   if (xmlText === null) return;
-  const fragment = xml(`<x xmlns="${MAIN}" xmlns:r="${REL}">${xmlText}</x>`).documentElement.firstElementChild!;
-  const node = doc.importNode(fragment, true);
   const at = SHEET_ORDER.indexOf(name);
   const after = Array.from(ws.children).find((el) => SHEET_ORDER.indexOf(el.localName) > at);
-  ws.insertBefore(node, after ?? null);
+  // Some parts come several times in a row (conditionalFormatting).
+  for (const fragment of Array.from(xml(`<x xmlns="${MAIN}" xmlns:r="${REL}">${xmlText}</x>`).documentElement.children)) ws.insertBefore(doc.importNode(fragment, true), after ?? null);
 }
 
 class SharedStrings {
@@ -178,6 +179,8 @@ function sheetXml(sheet: Sheet, index: number, calc: Calculator, strings: Shared
   setPart(doc, "autoFilter", filterXml(sheet));
   // A drawing (for charts) the sheet didn't have before.
   if (drawing && !Array.from(doc.documentElement.children).some((el) => el.localName === "drawing")) setPart(doc, "drawing", `<drawing r:id="${drawing}"/>`);
+  setPart(doc, "conditionalFormatting", conditionalXml(sheet.conditional));
+  setPart(doc, "dataValidations", validationsXml(sheet.validations));
   setPart(doc, "mergeCells", sheet.merges.length ? `<mergeCells count="${sheet.merges.length}">${sheet.merges.map((m) => `<mergeCell ref="${rangeAddress(m)}"/>`).join("")}</mergeCells>` : null);
   return serialize(doc);
 }

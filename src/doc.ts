@@ -8,6 +8,8 @@ import { compare } from "./formula/eval";
 import { MAX_COLS, MAX_ROWS, colOf, inRange, key, newSheet, rowOf, type Cell, type Range, type Scalar, type Sheet, type Workbook } from "./model";
 import { editText, formatValue, isDateFormat, locale, parseInput } from "./numfmt";
 import { defaultStyles, lookOf, withStyle, type StyleChange } from "./xlsx/styles";
+import { dxfXml, withoutRules, type CfRule, type CfStyle } from "./conditional";
+import { withoutValidation, type Validation } from "./validation";
 
 export interface Selection {
   /** The active cell. */
@@ -39,6 +41,8 @@ function cloneSheet(s: Sheet): Sheet {
     freeze: { ...s.freeze },
     filter: s.filter && { range: { ...s.filter.range }, shown: new Map([...s.filter.shown].map(([k, v]) => [k, new Set(v)])) },
     charts: [...s.charts],
+    conditional: [...s.conditional],
+    validations: [...s.validations],
   };
 }
 
@@ -267,7 +271,42 @@ export class Doc {
           cells.set(k, rest);
         }
       }
-      if (what !== "contents") this.sheet.merges = this.sheet.merges.filter((m) => !(m.r1 >= range.r1 && m.r2 <= range.r2 && m.c1 >= range.c1 && m.c2 <= range.c2));
+      if (what !== "contents") {
+        this.sheet.merges = this.sheet.merges.filter((m) => !(m.r1 >= range.r1 && m.r2 <= range.r2 && m.c1 >= range.c1 && m.c2 <= range.c2));
+        this.sheet.conditional = withoutRules(this.sheet.conditional, range);
+      }
+    });
+  }
+
+  // ---- conditional formatting -----------------------------------------------------------------
+
+  /** Adds a rule for a block of cells, above the rules already there (as Excel does). */
+  addRule(range: Range, rule: CfRule) {
+    this.change(() => {
+      this.sheet.conditional = [{ ranges: [range], rules: [rule] }, ...this.sheet.conditional];
+    });
+  }
+
+  /** A format for rules: its index in the workbook's list, added if it isn't there yet. */
+  dxf(style: CfStyle): number {
+    const xml = dxfXml(style);
+    const list = this.book.styles.dxfs;
+    const i = list.indexOf(xml);
+    return i >= 0 ? i : list.push(xml) - 1;
+  }
+
+  /** Sets what may be typed in a block of cells (a list, number limits), or (null) takes that off. */
+  setValidation(range: Range, rule: Validation | null) {
+    this.change(() => {
+      const rest = withoutValidation(this.sheet.validations, range);
+      this.sheet.validations = rule ? [...rest, { ...rule, ranges: [range] }] : rest;
+    });
+  }
+
+  /** Takes the rules off a block of cells, or (null) the whole sheet. */
+  clearRules(range: Range | null) {
+    this.change(() => {
+      this.sheet.conditional = range ? withoutRules(this.sheet.conditional, range) : [];
     });
   }
 
@@ -425,6 +464,8 @@ export class Doc {
         return { ...m, [lo]: a, [hi]: b };
       };
       sheet.merges = sheet.merges.map(shiftRange).filter((m): m is Range => !!m && (m.r1 !== m.r2 || m.c1 !== m.c2));
+      sheet.conditional = sheet.conditional.map((b) => ({ ...b, ranges: b.ranges.map(shiftRange).filter((g): g is Range => !!g) })).filter((b) => b.ranges.length);
+      sheet.validations = sheet.validations.map((v) => ({ ...v, ranges: v.ranges.map(shiftRange).filter((g): g is Range => !!g) })).filter((v) => v.ranges.length);
       if (sheet.filter) {
         const range = shiftRange(sheet.filter.range);
         sheet.filter = range ? { ...sheet.filter, range } : null;

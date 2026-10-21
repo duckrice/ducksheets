@@ -3,6 +3,8 @@
 // Cells are never changed in place; a change puts a new cell object in the
 // map, so undo can keep cheap copies of the maps.
 
+import type { CfBlock } from "./conditional";
+import type { Validation } from "./validation";
 import type { Styles } from "./xlsx/styles";
 
 /** An Excel error value, like #DIV/0! */
@@ -71,6 +73,10 @@ export interface Sheet {
   freeze: { rows: number; cols: number };
   filter: Filter | null;
   charts: Chart[];
+  /** Conditional formatting: rules for blocks of cells. */
+  conditional: CfBlock[];
+  /** Data validation: drop-down lists and limits on what can be typed. */
+  validations: Validation[];
   defaultColWidth: number;
   defaultRowHeight: number;
   /** For a sheet read from an .xlsx file: its part in the file and its XML, so what isn't edited here is kept. */
@@ -105,6 +111,8 @@ export function newSheet(name: string): Sheet {
     freeze: { rows: 0, cols: 0 },
     filter: null,
     charts: [],
+    conditional: [],
+    validations: [],
     defaultColWidth: 64,
     defaultRowHeight: 20,
   };
@@ -166,4 +174,17 @@ export function usedRange(sheet: Sheet): Range | null {
     c2 = Math.max(c2, colOf(k));
   }
   return r2 < 0 ? null : { r1: 0, c1: 0, r2, c2 };
+}
+
+/** A block with another taken out: what's left, in up to four pieces. */
+export function minusRange(g: Range, cut: Range): Range[] {
+  if (g.r2 < cut.r1 || g.r1 > cut.r2 || g.c2 < cut.c1 || g.c1 > cut.c2) return [g];
+  const out: Range[] = [];
+  if (g.r1 < cut.r1) out.push({ ...g, r2: cut.r1 - 1 });
+  if (g.r2 > cut.r2) out.push({ ...g, r1: cut.r2 + 1 });
+  const r1 = Math.max(g.r1, cut.r1);
+  const r2 = Math.min(g.r2, cut.r2);
+  if (g.c1 < cut.c1) out.push({ r1, r2, c1: g.c1, c2: cut.c1 - 1 });
+  if (g.c2 > cut.c2) out.push({ r1, r2, c1: cut.c2 + 1, c2: g.c2 });
+  return out;
 }

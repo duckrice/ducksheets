@@ -81,7 +81,7 @@ export function menu(anchor: HTMLElement, items: MenuItem[]) {
   });
 }
 
-function modal(content: HTMLElement, onKey: (event: KeyboardEvent) => void): () => void {
+export function modal(content: HTMLElement, onKey: (event: KeyboardEvent) => void): () => void {
   const backdrop = h("div", { class: "backdrop" }, content);
   const previous = document.activeElement as HTMLElement | null;
   backdrop.addEventListener("keydown", (event) => {

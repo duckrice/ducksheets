@@ -692,3 +692,31 @@ body {
 .chart:focus .chart-handle {
   visibility: visible;
 }
+
+/* The drop-down button beside a cell with a list (data validation). */
+.list-pick {
+  position: absolute;
+  z-index: 4;
+  display: grid;
+  place-items: center;
+  width: 17px;
+  height: 17px;
+  padding: 0;
+  border: 1px solid #c3c8cf;
+  border-radius: 2px;
+  background: #ffffff;
+  color: #333333;
+  cursor: pointer;
+}
+
+.list-pick:hover {
+  background: #e8eef7;
+}
+
+.dialog-error {
+  color: #b42318 !important;
+}
+
+.dialog-buttons .spacer {
+  flex: 1;
+}

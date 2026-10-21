@@ -48,6 +48,8 @@ export interface Styles {
   fills: (string | null)[];
   borders: Border[];
   xfs: Xf[];
+  /** The formats conditional formatting rules use, as XML (<dxf>…</dxf>), by dxfId. */
+  dxfs: string[];
   /** The XML each entry was read from, written back unchanged if it wasn't changed. */
   raw: { fonts: (string | null)[]; fills: (string | null)[]; borders: (string | null)[]; xfs: (string | null)[] };
   /** The rest of styles.xml (cell styles, table styles, …), kept as it was. */
@@ -64,6 +66,7 @@ export function defaultStyles(): Styles {
     fills: [null, null],
     borders: [{}],
     xfs: [{ numFmtId: 0, fontId: 0, fillId: 0, borderId: 0 }],
+    dxfs: [],
     raw: { fonts: [null], fills: ['<fill><patternFill patternType="none"/></fill>', '<fill><patternFill patternType="gray125"/></fill>'], borders: [null], xfs: [null] },
     source: null,
     theme: DEFAULT_THEME,
@@ -152,7 +155,7 @@ export function readStyles(xml: string | null, theme: string[]): Styles {
   if (!xml) return { ...defaultStyles(), theme };
   const doc = new DOMParser().parseFromString(xml, "application/xml");
   const root = doc.documentElement;
-  const out: Styles = { numFmts: new Map(), fonts: [], fills: [], borders: [], xfs: [], raw: { fonts: [], fills: [], borders: [], xfs: [] }, source: xml, theme };
+  const out: Styles = { numFmts: new Map(), fonts: [], fills: [], borders: [], xfs: [], dxfs: children(child(root, "dxfs"), "dxf").map((d) => serializer().serializeToString(d).replace(/sxmlns(:w+)?="[^"]*"/g, "")), raw: { fonts: [], fills: [], borders: [], xfs: [] }, source: xml, theme };
   for (const nf of children(child(root, "numFmts"), "numFmt")) out.numFmts.set(Number(nf.getAttribute("numFmtId")), nf.getAttribute("formatCode") ?? "General");
   const on = (el: Element, name: string) => {
     const e = child(el, name);
@@ -359,16 +362,18 @@ export function writeStyles(styles: Styles): string {
     fills: list("fills", fills),
     borders: list("borders", borders),
     cellXfs: list("cellXfs", xfs),
+    dxfs: list("dxfs", styles.dxfs),
   };
   if (!styles.source) {
-    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<styleSheet xmlns="${MAIN_NS}">${parts.numFmts}${parts.fonts}${parts.fills}${parts.borders}<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>${parts.cellXfs}<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles><dxfs count="0"/><tableStyles count="0"/></styleSheet>`;
+    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<styleSheet xmlns="${MAIN_NS}">${parts.numFmts}${parts.fonts}${parts.fills}${parts.borders}<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>${parts.cellXfs}<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>${parts.dxfs}<tableStyles count="0"/></styleSheet>`;
   }
-  // Replace each list in the original, in place; add numFmts first if it wasn't there.
+  // Replace each list in the original, in place; add numFmts first, and dxfs after the cell styles, if they weren't there.
   let xml = styles.source;
-  for (const name of ["numFmts", "fonts", "fills", "borders", "cellXfs"]) {
+  for (const name of ["numFmts", "fonts", "fills", "borders", "cellXfs", "dxfs"]) {
     const re = new RegExp(`<(?:\\w+:)?${name}\\b[^>]*?(?:/>|>[\\s\\S]*?</(?:\\w+:)?${name}>)`);
     if (re.test(xml)) xml = xml.replace(re, () => parts[name]);
     else if (name === "numFmts" && parts.numFmts) xml = xml.replace(/(<(?:\w+:)?styleSheet\b[^>]*>)/, (m) => m + parts.numFmts);
+    else if (name === "dxfs" && styles.dxfs.length) xml = xml.replace(/<(?:\w+:)?(?:tableStyles|colors|extLst)\b|<\/(?:\w+:)?styleSheet>/, (m) => parts.dxfs + m);
   }
   return xml;
 }

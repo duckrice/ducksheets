@@ -8,6 +8,8 @@ import { FormulaError, parse, print, shifted } from "../formula/parse";
 import { CellError, MAX_COLS, MAX_ROWS, key, newSheet, parseRange, type Cell, type Scalar, type Sheet, type Workbook } from "../model";
 import { readStyles, readTheme } from "./styles";
 import { readCharts } from "./charts";
+import { readConditional } from "../conditional";
+import { readValidations } from "../validation";
 
 const MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
 
@@ -85,7 +87,7 @@ export async function readXlsx(bytes: Uint8Array): Promise<Workbook> {
     if (!rel || !rel.type.endsWith("/worksheet")) continue; // chart sheets aren't shown yet
     const text = await zip.file(rel.path)?.async("string");
     if (!text) continue;
-    const sheet = readSheet(el.getAttribute("name") ?? `Sheet${book.sheets.length + 1}`, text, strings);
+    const sheet = readSheet(el.getAttribute("name") ?? `Sheet${book.sheets.length + 1}`, text, strings, styles.theme);
     sheet.origin = { path: rel.path, xml: text };
     await readCharts(zip, sheet);
     book.sheets.push(sheet);
@@ -125,7 +127,7 @@ function formulaText(text: string): string {
   }
 }
 
-export function readSheet(name: string, text: string, strings: string[]): Sheet {
+export function readSheet(name: string, text: string, strings: string[], theme: string[] = []): Sheet {
   const doc = xml(text);
   const sheet = newSheet(name);
   const ws = doc.documentElement;
@@ -224,6 +226,8 @@ export function readSheet(name: string, text: string, strings: string[]): Sheet 
       sheet.filter.shown.set(Number(fc.getAttribute("colId")), shown);
     }
   }
+  sheet.conditional = readConditional(ws, theme);
+  sheet.validations = readValidations(ws);
   return sheet;
 }
 

@@ -9,6 +9,8 @@ import { icon, type IconName } from "./icons";
 import { MAX_COLS, MAX_ROWS, type Range } from "./model";
 import { locale } from "./numfmt";
 import { menu, popover } from "./ui";
+import { conditionalMenu } from "./cfmenu";
+import { validationDialog } from "./valmenu";
 import { lookOf, type Border, type BorderSide, type StyleChange } from "./xlsx/styles";
 
 export interface ToolbarActions {
@@ -149,6 +151,8 @@ export function createToolbar(doc: Doc, grid: Grid, actions: ToolbarActions) {
   const textColor = button("textColor", "Text colour", () => palette(textColor, (color) => apply({ color }), "Automatic"));
   const fillColor = button("fillColor", "Fill colour", () => palette(fillColor, (fill) => apply({ fill }), "No fill"));
 
+  const conditional = button("conditional", "Conditional formatting", () => menu(conditional, conditionalMenu(doc)));
+
   // Number formats.
   const formats = numberFormats();
   const numFmt = h("select", { class: "tb-select format-select", title: "Number format", "aria-label": "Number format" }, ...formats.map(([name]) => h("option", { value: name }, name)), h("option", { value: "custom", disabled: true }, "Custom")) as HTMLSelectElement;
@@ -239,6 +243,8 @@ export function createToolbar(doc: Doc, grid: Grid, actions: ToolbarActions) {
       button("sortAsc", "Sort A to Z (smallest first)", () => sortBy(false)),
       button("sortDesc", "Sort Z to A (largest first)", () => sortBy(true)),
       button("filter", "Filter (Ctrl+Shift+L)", () => doc.toggleFilter(), () => !!doc.sheet.filter),
+      conditional,
+      button("validation", "Data validation: a list to choose from, or limits on numbers", () => validationDialog(doc)),
       freeze,
       button("chart", "Insert a chart of the selected data", actions.chart),
       button("find", "Find and replace (Ctrl+F)", actions.find),
