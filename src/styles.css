@@ -779,3 +779,24 @@ body {
 .mono {
   font-family: Consolas, monospace;
 }
+
+/* The format painter waits for cells to be clicked. */
+.grid.painting,
+.painting canvas {
+  cursor: copy;
+}
+
+.column-list {
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+/* Printing happens in a frame no one sees. */
+.print-frame {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  width: 0;
+  height: 0;
+  border: 0;
+}

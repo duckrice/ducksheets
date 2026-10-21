@@ -20,6 +20,7 @@ import { baseName, onCloseRequested, onFilesOpened, pickFile, pickSavePath, read
 import { offerUpdate } from "./updates";
 import { insertChart, renderCharts } from "./charts";
 import { formatCells } from "./formatdialog";
+import { printSheet } from "./print";
 import { pasteSpecial } from "./pastespecial";
 import { allowed, describe as describeRule, listItems, validationAt } from "./validation";
 
@@ -77,6 +78,11 @@ function mount(next: Doc) {
     autoSum,
     find: () => findReplace(false),
     chart: () => insertChart(doc, grid),
+    print: () => {
+      if (!printSheet(doc)) toast("There's nothing on this sheet to print.");
+    },
+    painter: () => togglePainter(),
+    painting: () => !!painter,
   });
   tabs = h("div", { class: "sheet-tabs", role: "tablist" });
   summary = h("span", { class: "summary" });
@@ -354,6 +360,7 @@ function keydown(e: KeyboardEvent) {
       editor.start("");
       return done();
     case "Escape":
+      if (painter) stopPainter();
       grid.marquee = null;
       clip = clip && { ...clip, data: { ...clip.data, cut: false } };
       grid.render();
@@ -452,6 +459,9 @@ function keydown(e: KeyboardEvent) {
       case "h":
         findReplace(true);
         return done();
+      case "p":
+        if (!printSheet(doc)) toast("There's nothing on this sheet to print.");
+        return done();
       case "s":
         void save(e.shiftKey);
         return done();
@@ -536,6 +546,35 @@ document.addEventListener("paste", (e) => {
   } else if (text) doc.pasteText(text, at);
   refreshSelection();
 });
+
+/** Format painter: the formats picked up, waiting for the cells to give them to. */
+let painter: (number | undefined)[][] | null = null;
+
+function togglePainter() {
+  if (painter) return stopPainter();
+  const range = grid.expanded(selRange(doc.sel));
+  const rows = Math.min(range.r2 - range.r1 + 1, 200);
+  const cols = Math.min(range.c2 - range.c1 + 1, 50);
+  painter = Array.from({ length: rows }, (_, i) => Array.from({ length: cols }, (_, j) => doc.cell(range.r1 + i, range.c1 + j)?.s));
+  grid.el.classList.add("painting");
+  toolbar.update();
+  // The next click or drag on the sheet gets the formats.
+  const paint = (e: PointerEvent) => {
+    if (!painter || e.button !== 0) return;
+    const formats = painter;
+    setTimeout(() => {
+      doc.paintFormats(formats, selRange(doc.sel));
+      stopPainter();
+    });
+  };
+  grid.el.addEventListener("pointerup", paint, { once: true });
+}
+
+function stopPainter() {
+  painter = null;
+  grid.el.classList.remove("painting");
+  toolbar.update();
+}
 
 /** Paste special: what was copied in DuckSheets, pasted as values, formulas or formats only. */
 async function pasteSpecialHere() {

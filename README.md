@@ -25,7 +25,12 @@ A free spreadsheet for Windows that opens and saves Excel workbooks (.xlsx, .xls
   - Text: font, size (also Alt+scroll wheel), bold/italic/underline/strike and colours.
   - Cells: fill, borders, alignment, wrap text, merge and centre.
   - Numbers: number formats, decimals.
-- **Data tools.** AutoSum, sort, filter (with search), freeze panes, find and replace.
+- **Dynamic arrays.** FILTER, SORT, SORTBY, UNIQUE, SEQUENCE and TRANSPOSE spill their results into the cells around them, as in Excel 365, and are saved as Excel's own dynamic arrays.
+- **Conditional formatting.** Highlight cells greater than, between or equal to a value, text that contains something, duplicates, the top 10 or those above average, or where a formula is true; data bars and colour scales.
+- **Data validation.** A drop-down list to choose from (Alt+Down), or limits on numbers; values that don't fit are refused.
+- **Data tools.** AutoSum, sort, filter (with search), remove duplicates, text to columns, freeze panes, find and replace.
+- **Typing help.** AutoComplete finishes words from the column, Format cells (Ctrl+1), format painter, Paste special (values, formulas, formats, transpose) and Show formulas (Ctrl+`).
+- **Printing.** Ctrl+P prints the sheet (or the selection), with its formats; choose "Microsoft Print to PDF" to save a PDF.
 - **Charts.** Column, bar, line and pie charts, saved as real Excel charts linked to the cells.
 - **Copy and paste** with Excel and other programs.
 
@@ -49,6 +54,11 @@ A free spreadsheet for Windows that opens and saves Excel workbooks (.xlsx, .xls
 | Alt+= | AutoSum |
 | Ctrl+Shift+L | Filter |
 | Ctrl+F / Ctrl+H | Find / replace |
+| Ctrl+1 | Format cells |
+| Ctrl+Alt+V | Paste special |
+| Ctrl+` | Show formulas |
+| Alt+Down | Open a cell's drop-down list |
+| Ctrl+P | Print |
 | Ctrl+PageUp / PageDown | Previous / next sheet |
 | Shift+F11 | New sheet |
 | Ctrl+scroll wheel | Zoom |

@@ -376,6 +376,22 @@ await session(9801, async (app) => {
   await app.evaluate(`(() => { const sel = document.querySelector('.format-dialog select[aria-label="Category"]'); sel.value = "Percentage"; sel.dispatchEvent(new Event("change")); const d = document.querySelector('.format-dialog input[aria-label="Decimal places"]'); d.value = "1"; d.dispatchEvent(new Event("input")); [...document.querySelectorAll(".format-dialog .btn")].find((b) => b.textContent === "OK").click(); })()`);
   check("and sets the number format", (await s.shown(31, 0)) === "5000.0%", await s.shown(31, 0));
 
+  // AutoComplete: typing the start of a word from the column above finishes it.
+  await app.evaluate(`(() => { const d = window.__ducksheets.doc; d.setInput(50, 0, "Bergen"); d.setInput(51, 0, "Oslo"); d.setInput(52, 0, "Trondheim"); })()`);
+  await s.select(53, 0);
+  await s.type("Os", "none");
+  const completed = await app.evaluate(`(() => { const b = document.querySelector(".cell-editor"); return [b.value, b.selectionStart, b.selectionEnd].join(); })()`);
+  check("typing the start of a word above finishes it, the rest selected", completed === "Oslo,2,4", completed);
+  await app.key("Enter", 13);
+  check("and Enter puts the whole word in", (await s.value(53, 0)) === "Oslo");
+
+  // Format painter: copy bold from one cell, click another.
+  await app.evaluate(`(() => { const d = window.__ducksheets.doc; d.format({ r1: 50, c1: 0, r2: 50, c2: 0 }, { bold: true }); d.sel = { r: 50, c: 0, ar: 50, ac: 0 }; d.emit(); })()`);
+  await app.clickOn('.toolbar [title^="Format painter"]');
+  const [px, py] = await s.at(52, 0);
+  await app.click(px, py);
+  check("the format painter gives the formats to the cell clicked", await app.waitFor(`window.__ducksheets.doc.book.styles.fonts[window.__ducksheets.doc.book.styles.xfs[window.__ducksheets.doc.cell(52, 0)?.s ?? 0].fontId]?.bold === true`, 3000));
+
   // Ctrl+` shows formulas.
   await app.send("Input.dispatchKeyEvent", { type: "keyDown", key: "`", code: "Backquote", windowsVirtualKeyCode: 192, modifiers: 2 });
   await app.send("Input.dispatchKeyEvent", { type: "keyUp", key: "`", code: "Backquote", windowsVirtualKeyCode: 192, modifiers: 2 });

@@ -3,6 +3,7 @@ import { Doc, newWorkbook, seriesOf } from "../src/doc";
 import { key } from "../src/model";
 import { dateToSerial, locale } from "../src/numfmt";
 import { lookOf } from "../src/xlsx/styles";
+import { printHtml } from "../src/print";
 
 const doc = () => new Doc(newWorkbook());
 const put = (d: Doc, cells: Record<string, string>) => {
@@ -155,5 +156,44 @@ describe("paste special", () => {
     const { doc, clip } = setup();
     doc.paste(clip, { r: 9, c: 0 }, { transpose: true });
     expect([doc.value(9, 0), doc.cell(9, 1)?.f]).toEqual([2, "A10*10"]);
+  });
+});
+
+describe("data tools, format painter and printing", () => {
+  const people = () => {
+    const doc = new Doc(newWorkbook());
+    [["Name", "City"], ["Kari", "Oslo"], ["Ola", "Bergen"], ["kari", "Oslo"], ["Per", "Oslo"], ["Kari", "Bergen"]].forEach((row, r) => row.forEach((v, c) => doc.setInput(r, c, v)));
+    return doc;
+  };
+
+  it("removes rows that repeat in the chosen columns, keeping the first", () => {
+    const doc = people();
+    expect(doc.removeDuplicates({ r1: 0, c1: 0, r2: 5, c2: 1 }, [0, 1])).toBe(1);
+    expect([1, 2, 3, 4, 5].map((r) => doc.value(r, 0))).toEqual(["Kari", "Ola", "Per", "Kari", null]);
+    expect(doc.removeDuplicates({ r1: 0, c1: 0, r2: 5, c2: 1 }, [0])).toBe(1);
+    expect(doc.value(0, 0)).toBe("Name");
+  });
+
+  it("splits text into columns, reading each part as typed", () => {
+    const doc = new Doc(newWorkbook());
+    doc.setInput(0, 0, "Kari;42;Oslo");
+    doc.textToColumns({ r1: 0, c1: 0, r2: 0, c2: 0 }, ";");
+    expect([doc.value(0, 0), doc.value(0, 1), doc.value(0, 2)]).toEqual(["Kari", 42, "Oslo"]);
+  });
+
+  it("paints formats over other cells, keeping what's in them", () => {
+    const doc = people();
+    doc.format({ r1: 0, c1: 0, r2: 0, c2: 0 }, { bold: true });
+    doc.paintFormats([[doc.cell(0, 0)?.s]], { r1: 2, c1: 0, r2: 3, c2: 1 });
+    expect([doc.value(3, 1), lookOf(doc.book.styles, doc.cell(3, 1)?.s).font.bold]).toEqual(["Oslo", true]);
+  });
+
+  it("prints the used cells as a table, with their formats", () => {
+    const doc = people();
+    doc.format({ r1: 0, c1: 0, r2: 0, c2: 1 }, { bold: true, fill: "#FFFF00" });
+    const html = printHtml(doc)!;
+    expect(html).toContain("<td style='font:bold 11pt");
+    expect(html).toContain("background:#FFFF00");
+    expect((html.match(/<tr /g) ?? []).length).toBe(6);
   });
 });

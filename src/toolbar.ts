@@ -10,6 +10,7 @@ import { MAX_COLS, MAX_ROWS, type Range } from "./model";
 import { locale } from "./numfmt";
 import { menu, popover } from "./ui";
 import { conditionalMenu } from "./cfmenu";
+import { dataMenu } from "./datatools";
 import { validationDialog } from "./valmenu";
 import { lookOf, type Border, type BorderSide, type StyleChange } from "./xlsx/styles";
 
@@ -20,6 +21,10 @@ export interface ToolbarActions {
   autoSum(): void;
   find(): void;
   chart(): void;
+  print(): void;
+  /** Format painter: starts copying formats, or (when on) stops. */
+  painter(): void;
+  painting(): boolean;
 }
 
 const FONTS = ["Calibri", "Aptos", "Arial", "Cambria", "Consolas", "Georgia", "Segoe UI", "Times New Roman", "Verdana"];
@@ -152,6 +157,7 @@ export function createToolbar(doc: Doc, grid: Grid, actions: ToolbarActions) {
   const fillColor = button("fillColor", "Fill colour", () => palette(fillColor, (fill) => apply({ fill }), "No fill"));
 
   const conditional = button("conditional", "Conditional formatting", () => menu(conditional, conditionalMenu(doc)));
+  const dataTools = button("table", "Data tools: remove duplicates, text to columns", () => menu(dataTools, dataMenu(doc)));
 
   // Number formats.
   const formats = numberFormats();
@@ -199,6 +205,7 @@ export function createToolbar(doc: Doc, grid: Grid, actions: ToolbarActions) {
       button("newDoc", "New workbook (Ctrl+N)", actions.newBook),
       button("open", "Open (Ctrl+O)", actions.open),
       button("save", "Save (Ctrl+S)", actions.save),
+      button("print", "Print, or save as PDF (Ctrl+P)", actions.print),
     ),
     h("div", { class: "tb-group" }, button("undo", "Undo (Ctrl+Z)", () => doc.undo()), button("redo", "Redo (Ctrl+Y)", () => doc.redo())),
     h(
@@ -212,6 +219,7 @@ export function createToolbar(doc: Doc, grid: Grid, actions: ToolbarActions) {
       button("strike", "Strikethrough (Ctrl+5)", () => apply({ strike: !active().font.strike }), () => !!active().font.strike),
       textColor,
       fillColor,
+      button("painter", "Format painter: copy the formats, then click or drag over the cells to give them", actions.painter, actions.painting),
     ),
     h(
       "div",
@@ -244,6 +252,7 @@ export function createToolbar(doc: Doc, grid: Grid, actions: ToolbarActions) {
       button("sortDesc", "Sort Z to A (largest first)", () => sortBy(true)),
       button("filter", "Filter (Ctrl+Shift+L)", () => doc.toggleFilter(), () => !!doc.sheet.filter),
       conditional,
+      dataTools,
       button("validation", "Data validation: a list to choose from, or limits on numbers", () => validationDialog(doc)),
       freeze,
       button("chart", "Insert a chart of the selected data", actions.chart),

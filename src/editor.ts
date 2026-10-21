@@ -7,7 +7,7 @@ import { selRange, type Doc } from "./doc";
 import { FUNCTION_NAMES } from "./formula/functions";
 import { quoteSheet } from "./formula/parse";
 import type { Grid } from "./grid";
-import { MAX_COLS, MAX_ROWS, address, colIndex, mergeAt, parseRange, rangeAddress, type Range } from "./model";
+import { MAX_COLS, MAX_ROWS, address, colIndex, key, mergeAt, parseRange, rangeAddress, type Range } from "./model";
 import { lookOf } from "./xlsx/styles";
 
 const COLORS = ["#2563eb", "#dc2626", "#9333ea", "#ea580c", "#0891b2", "#be185d"];
@@ -54,7 +54,10 @@ export class Editor {
     grid.el.append(this.box, this.list);
 
     for (const input of [this.box, this.barInput]) {
-      input.addEventListener("input", () => this.typed(input));
+      input.addEventListener("input", (e) => {
+        this.typed(input);
+        if ((e as InputEvent).inputType === "insertText" && input === this.box) this.autoComplete();
+      });
       input.addEventListener("keydown", (e) => this.key(e, input));
       input.addEventListener("click", () => {
         if (this.editing) this.editing.mode = "edit";
@@ -156,6 +159,31 @@ export class Editor {
     this.fit();
     this.outline();
     this.suggest(from);
+  }
+
+  /**
+   * AutoComplete, as in Excel: text typed in a cell is finished from the entries in the column above
+   * and below it, when only one starts that way. The rest is selected, so typing on replaces it.
+   */
+  private autoComplete() {
+    const editing = this.editing;
+    const box = this.box;
+    const text = box.value;
+    if (!editing || editing.mode !== "enter" || !text || text.startsWith("=") || box.selectionStart !== text.length || !Number.isNaN(Number(text.replace(",", ".")))) return;
+    const lower = text.toLowerCase();
+    const found = new Map<string, string>();
+    const cells = this.doc.book.sheets[editing.sheet].cells;
+    for (const step of [-1, 1])
+      for (let r = editing.r + step, n = 0; r >= 0 && n < 2000; r += step, n++) {
+        const v = cells.get(key(r, editing.c))?.v;
+        if (v === undefined || v === null || v === "") break;
+        if (typeof v === "string" && v.toLowerCase().startsWith(lower)) found.set(v.toLowerCase(), v);
+      }
+    const [word] = found.values();
+    if (found.size !== 1 || word.length <= text.length) return;
+    box.value = text + word.slice(text.length);
+    box.setSelectionRange(text.length, word.length);
+    this.typed(box);
   }
 
   private outline() {

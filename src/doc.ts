@@ -597,6 +597,74 @@ export class Doc {
     });
   }
 
+  /**
+   * Removes rows whose values in `cols` repeat an earlier row's (text compared without regard to
+   * case), as Excel's Remove duplicates: the rows left move up and the bottom is cleared. Returns
+   * how many rows were removed.
+   */
+  removeDuplicates(range: Range, cols: number[], header = this.hasHeader(range)): number {
+    const top = header ? range.r1 + 1 : range.r1;
+    const seen = new Set<string>();
+    const keep: number[] = [];
+    for (let r = top; r <= range.r2; r++) {
+      const id = JSON.stringify(cols.map((c) => {
+        const v = this.value(r, c);
+        return typeof v === "string" ? v.toLowerCase() : v instanceof Object ? String(v) : v;
+      }));
+      if (seen.has(id)) continue;
+      seen.add(id);
+      keep.push(r);
+    }
+    const removed = range.r2 - top + 1 - keep.length;
+    if (!removed) return 0;
+    this.change(() => {
+      const cells = this.sheet.cells;
+      const old = new Map<number, Cell | undefined>();
+      for (let r = top; r <= range.r2; r++) for (let c = range.c1; c <= range.c2; c++) old.set(key(r, c), cells.get(key(r, c)));
+      for (let i = 0; i <= range.r2 - top; i++) {
+        const from = keep[i];
+        for (let c = range.c1; c <= range.c2; c++) {
+          const k = key(top + i, c);
+          const cell = from === undefined ? undefined : old.get(key(from, c));
+          if (!cell) cells.delete(k);
+          else cells.set(k, cell.f !== undefined ? { ...cell, f: moveFormula(cell.f, top + i - from, 0) } : cell);
+        }
+      }
+    });
+    return removed;
+  }
+
+  /** Splits a column's text at a separator into the columns to its right, each part read as if typed. */
+  textToColumns(range: Range, separator: string) {
+    if (!separator) return;
+    this.change(() => {
+      for (let r = range.r1; r <= range.r2; r++) {
+        const cell = this.sheet.cells.get(key(r, range.c1));
+        if (!cell || cell.f !== undefined || typeof cell.v !== "string") continue;
+        const parts = separator === " " ? cell.v.trim().split(/\s+/) : cell.v.split(separator);
+        parts.forEach((part, j) => this.put(this.sheet, r, range.c1 + j, part.trim()));
+      }
+    });
+  }
+
+  /** Format painter: the formats copied (row by row), repeated over the cells painted, contents kept. */
+  paintFormats(source: (number | undefined)[][], range: Range) {
+    const rows = source.length;
+    const cols = source[0]?.length ?? 0;
+    if (!rows || !cols) return;
+    this.change(() => {
+      for (let r = range.r1; r <= Math.min(range.r2, range.r1 + 5000); r++)
+        for (let c = range.c1; c <= Math.min(range.c2, range.c1 + 500); c++) {
+          const k = key(r, c);
+          const s = source[(r - range.r1) % rows][(c - range.c1) % cols];
+          const { s: _old, ...content } = this.sheet.cells.get(k) ?? {};
+          const next = { ...content, ...(s !== undefined ? { s } : {}) };
+          if (Object.keys(next).length) this.sheet.cells.set(k, next);
+          else this.sheet.cells.delete(k);
+        }
+    });
+  }
+
   /** Turns filtering on for the data around the selection, or off. */
   toggleFilter() {
     this.change(() => {
