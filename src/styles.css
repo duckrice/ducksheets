@@ -720,3 +720,62 @@ body {
 .dialog-buttons .spacer {
   flex: 1;
 }
+
+/* Format cells (Ctrl+1) and other dialogs with more to set. */
+.format-dialog {
+  width: 520px;
+}
+
+.format-tabs {
+  display: flex;
+  gap: 2px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.format-tab-button {
+  padding: 6px 12px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.format-tab-button.active {
+  border-bottom-color: var(--accent);
+  color: var(--text);
+}
+
+.format-tab {
+  min-height: 230px;
+}
+
+.format-cols {
+  display: grid;
+  grid-template-columns: 160px 1fr;
+  gap: 14px;
+}
+
+.format-side p {
+  margin-top: 8px;
+}
+
+.format-sample {
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: Calibri, "Segoe UI", sans-serif;
+}
+
+.format-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 0;
+}
+
+.mono {
+  font-family: Consolas, monospace;
+}

@@ -344,6 +344,45 @@ await session(9801, async (app) => {
   await app.key("Enter", 13);
   check("and Enter puts it in", (await s.value(15, 3)) === 7);
 
+  // Conditional formatting from the toolbar: Highlight cells rules → Greater than…
+  for (const [r, v] of [[30, "5"], [31, "50"], [32, "500"]]) {
+    await s.select(r, 0);
+    await s.type(v);
+  }
+  await app.evaluate(`(() => { const d = window.__ducksheets.doc; d.sel = { r: 30, c: 0, ar: 32, ac: 0 }; d.emit(); })()`);
+  await app.clickOn('.toolbar [title="Conditional formatting"]');
+  await app.evaluate(`[...document.querySelectorAll(".menu-item")].find((b) => b.textContent.startsWith("Highlight cells rules")).click()`);
+  await app.evaluate(`[...document.querySelectorAll(".menu-item")].find((b) => b.textContent.startsWith("Greater than")).click()`);
+  check("Greater than… asks for the value", await app.waitFor(`!!document.querySelector('.cf-dialog input')`, 3000));
+  await app.evaluate(`(() => { const i = document.querySelector('.cf-dialog input'); i.value = "40"; [...document.querySelectorAll(".cf-dialog .btn")].find((b) => b.textContent === "OK").click(); })()`);
+  const fills = await app.evaluate(`[30, 31, 32].map((r) => window.__ducksheets.grid.effects.get(r * 16384)?.fill ?? "-").join()`);
+  check("and colours the cells above it", fills === "-,#FFC7CE,#FFC7CE", fills);
+
+  // Data validation: a list shows a drop-down beside the cell; a value not in it isn't put in.
+  await app.evaluate(`(() => { const d = window.__ducksheets.doc; d.sel = { r: 40, c: 1, ar: 40, ac: 1 }; d.setValidation({ r1: 40, c1: 1, r2: 45, c2: 1 }, { ranges: [], t: "list", f: '"Yes,No"' }); window.__ducksheets.grid.el.focus(); })()`);
+  check("a cell with a list shows a drop-down button", await app.waitFor(`!document.querySelector(".list-pick").hidden`, 2000));
+  await app.clickOn(".list-pick");
+  await app.evaluate(`[...document.querySelectorAll(".menu-item")].find((b) => b.textContent === "No").click()`);
+  check("choosing from it fills the cell", (await s.value(40, 1)) === "No");
+  await s.select(41, 1);
+  await s.type("Maybe");
+  check("a value not in the list is refused, with a message", (await app.waitFor(`document.querySelector('[role="alertdialog"] h2')?.textContent.includes("doesn't match")`, 3000)) && (await s.value(41, 1)) === null);
+  await app.evaluate(`[...document.querySelectorAll('[role="alertdialog"] .btn')].find((b) => b.textContent === "Cancel").click()`);
+
+  // Format cells (Ctrl+1): a percentage with one decimal.
+  await s.select(31, 0);
+  await app.key("1", 49, 2);
+  check("Ctrl+1 opens Format cells", await app.waitFor(`!!document.querySelector(".format-dialog")`, 3000));
+  await app.evaluate(`(() => { const sel = document.querySelector('.format-dialog select[aria-label="Category"]'); sel.value = "Percentage"; sel.dispatchEvent(new Event("change")); const d = document.querySelector('.format-dialog input[aria-label="Decimal places"]'); d.value = "1"; d.dispatchEvent(new Event("input")); [...document.querySelectorAll(".format-dialog .btn")].find((b) => b.textContent === "OK").click(); })()`);
+  check("and sets the number format", (await s.shown(31, 0)) === "5000.0%", await s.shown(31, 0));
+
+  // Ctrl+` shows formulas.
+  await app.send("Input.dispatchKeyEvent", { type: "keyDown", key: "`", code: "Backquote", windowsVirtualKeyCode: 192, modifiers: 2 });
+  await app.send("Input.dispatchKeyEvent", { type: "keyUp", key: "`", code: "Backquote", windowsVirtualKeyCode: 192, modifiers: 2 });
+  check("Ctrl+` shows the formulas", (await app.evaluate(`window.__ducksheets.grid.showFormulas`)) === true);
+  await app.send("Input.dispatchKeyEvent", { type: "keyDown", key: "`", code: "Backquote", windowsVirtualKeyCode: 192, modifiers: 2 });
+  await app.send("Input.dispatchKeyEvent", { type: "keyUp", key: "`", code: "Backquote", windowsVirtualKeyCode: 192, modifiers: 2 });
+
   check("no errors in the app", app.errors.length === 0, app.errors.join("; "));
 
   // Closing with changes asks whether to save.

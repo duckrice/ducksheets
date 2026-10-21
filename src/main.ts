@@ -19,6 +19,8 @@ import { ask, askName, askSave, menu, popover, toast, type MenuItem } from "./ui
 import { baseName, onCloseRequested, onFilesOpened, pickFile, pickSavePath, readPath, setTitle, startupFiles, writePath, type OpenedFile } from "./platform";
 import { offerUpdate } from "./updates";
 import { insertChart, renderCharts } from "./charts";
+import { formatCells } from "./formatdialog";
+import { pasteSpecial } from "./pastespecial";
 import { allowed, describe as describeRule, listItems, validationAt } from "./validation";
 
 const app = document.getElementById("app")!;
@@ -372,6 +374,19 @@ function keydown(e: KeyboardEvent) {
     autoSum();
     return done();
   }
+  if (mod && e.altKey && e.key.toLowerCase() === "v") {
+    void pasteSpecialHere();
+    return done();
+  }
+  if (mod && !e.altKey && e.code === "Backquote") {
+    grid.showFormulas = !grid.showFormulas;
+    grid.render();
+    return done();
+  }
+  if (mod && !e.altKey && (e.key === "1" || e.code === "Digit1") && !e.shiftKey) {
+    formatCells(doc, grid);
+    return done();
+  }
   if (mod && !e.altKey) {
     const k = e.key.toLowerCase();
     const look = lookOf(doc.book.styles, doc.cell(r, c)?.s);
@@ -522,6 +537,17 @@ document.addEventListener("paste", (e) => {
   refreshSelection();
 });
 
+/** Paste special: what was copied in DuckSheets, pasted as values, formulas or formats only. */
+async function pasteSpecialHere() {
+  const text = await navigator.clipboard.readText().catch(() => "");
+  if (!clip || text.replace(/\r/g, "") !== clip.text.replace(/\r/g, "")) return toast("Copy cells in DuckSheets first; Paste special pastes those.");
+  const how = await pasteSpecial();
+  grid.el.focus({ preventScroll: true });
+  if (!how) return;
+  const range = selRange(doc.sel);
+  doc.paste(clip.data, { r: range.r1, c: range.c1 }, how);
+}
+
 function copy(e: ClipboardEvent, cut: boolean) {
   if (!doc || editor.active || isTyping(e.target as Element)) return;
   e.preventDefault();
@@ -545,6 +571,7 @@ function contextMenu(x: number, y: number, on: "cell" | "row" | "col") {
   const items: MenuItem[] = [
     { label: "Cut", action: exec("cut") },
     { label: "Copy", action: exec("copy") },
+    { label: "Paste special…", action: () => void pasteSpecialHere() },
     { label: "Paste", action: () => void navigator.clipboard.readText().then((text) => (clip && text.replace(/\r/g, "") === clip.text.replace(/\r/g, "") ? doc.paste(clip.data, { r: range.r1, c: range.c1 }) : doc.pasteText(text, { r: range.r1, c: range.c1 }))) },
   ];
   if (on !== "col") items.push({ label: rows > 1 ? `Insert ${rows} rows above` : "Insert a row above", action: () => doc.insertDelete("r", range.r1, rows) }, { label: rows > 1 ? `Delete ${rows} rows` : "Delete the row", action: () => doc.insertDelete("r", range.r1, -rows) });
@@ -568,6 +595,7 @@ function contextMenu(x: number, y: number, on: "cell" | "row" | "col") {
     );
   }
   if (on === "cell") items.push({ label: "Merge and centre", action: () => doc.toggleMerge(grid.expanded(range)) });
+  items.push({ label: "Format cells… (Ctrl+1)", action: () => formatCells(doc, grid) });
   // A menu needs something to sit under: a tiny element where the mouse is.
   const at = h("div", { class: "menu-anchor" });
   at.style.left = `${x}px`;

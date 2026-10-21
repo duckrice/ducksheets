@@ -3,7 +3,7 @@
 // never changed in place, so the copies are cheap), and undo puts them back.
 
 import { Calculator } from "./calc";
-import { afterInsertDelete, parse, print, renamedSheet, shifted, type Node } from "./formula/parse";
+import { afterInsertDelete, mapRefs, parse, print, renamedSheet, shifted, type Node } from "./formula/parse";
 import { compare } from "./formula/eval";
 import { MAX_COLS, MAX_ROWS, colOf, inRange, key, newSheet, rowOf, type Cell, type Range, type Scalar, type Sheet, type Workbook } from "./model";
 import { editText, formatValue, isDateFormat, locale, parseInput } from "./numfmt";
@@ -691,19 +691,41 @@ export class Doc {
   }
 
   /** Pastes what was copied in DuckSheets: formulas move with the cells, formats come along. */
-  paste(clip: Clip, at: { r: number; c: number }) {
+  /**
+   * Pastes what was copied: everything, or (Paste special) only the values, the formulas or the
+   * formats, the latter keeping the formats or contents already there; turned on its side if asked.
+   */
+  paste(clip: Clip, at: { r: number; c: number }, how: { what?: "all" | "values" | "formulas" | "formats"; transpose?: boolean } = {}) {
+    const what = how.what ?? "all";
     this.change(() => {
       const source = this.book.sheets[clip.sheet];
-      if (clip.cut && source) for (let i = 0; i < clip.rows; i++) for (let j = 0; j < clip.cols; j++) source.cells.delete(key(clip.r + i, clip.c + j));
+      // Values as they are now, before a cut takes the cells away.
+      const values = what === "values" ? clip.cells.map((row, i) => row.map((_, j) => this.calc.value(clip.sheet, clip.r + i, clip.c + j))) : null;
+      if (clip.cut && what === "all" && source) for (let i = 0; i < clip.rows; i++) for (let j = 0; j < clip.cols; j++) source.cells.delete(key(clip.r + i, clip.c + j));
       for (let i = 0; i < clip.rows; i++)
         for (let j = 0; j < clip.cols; j++) {
+          const [ti, tj] = how.transpose ? [j, i] : [i, j];
+          const k = key(at.r + ti, at.c + tj);
           const cell = clip.cells[i][j];
-          const k = key(at.r + i, at.c + j);
-          if (!cell) this.sheet.cells.delete(k);
+          const old = this.sheet.cells.get(k);
+          const keep = old?.s !== undefined ? { s: old.s } : {};
           // A cut moves formulas as they are; a copy moves their relative references.
-          else this.sheet.cells.set(k, cell.f !== undefined && !clip.cut ? { ...cell, f: moveFormula(cell.f, at.r - clip.r, at.c - clip.c) } : cell);
+          const [dr, dc] = [at.r + ti - clip.r - i, at.c + tj - clip.c - j];
+          const moved = cell?.f !== undefined && !clip.cut ? { ...cell, f: how.transpose ? transposedFormula(cell.f, clip, at, dr, dc) : moveFormula(cell.f, dr, dc) } : cell;
+          let next: Cell | undefined;
+          if (what === "all") next = moved;
+          else if (what === "values") next = values![i][j] === null ? undefined : { v: values![i][j], ...keep };
+          else if (what === "formulas") next = moved && (moved.f !== undefined || moved.v !== undefined) ? { ...(moved.f !== undefined ? { f: moved.f } : { v: moved.v }), ...keep } : undefined;
+          else {
+            const { s: _s, ...content } = old ?? {};
+            next = { ...content, ...(cell?.s !== undefined ? { s: cell.s } : {}) };
+          }
+          if (next && Object.keys(next).length) this.sheet.cells.set(k, next);
+          else if (what === "all" || !old?.s || what === "formats") this.sheet.cells.delete(k);
+          else this.sheet.cells.set(k, { s: old.s });
         }
-      this.sel = { r: at.r, c: at.c, ar: at.r + clip.rows - 1, ac: at.c + clip.cols - 1 };
+      const [rows, cols] = how.transpose ? [clip.cols, clip.rows] : [clip.rows, clip.cols];
+      this.sel = { r: at.r, c: at.c, ar: at.r + rows - 1, ac: at.c + cols - 1 };
     });
   }
 
@@ -714,6 +736,16 @@ export class Doc {
       rows.forEach((row, i) => row.forEach((v, j) => this.put(this.sheet, at.r + i, at.c + j, v)));
       this.sel = { r: at.r, c: at.c, ar: at.r + rows.length - 1, ac: at.c + Math.max(...rows.map((r) => r.length)) - 1 };
     });
+  }
+}
+
+/** A formula pasted on its side: references into the copied block turn with it, others move as in a copy. */
+function transposedFormula(f: string, clip: Clip, at: { r: number; c: number }, dr: number, dc: number): string {
+  const inside = (r: number, c: number) => r >= clip.r && r < clip.r + clip.rows && c >= clip.c && c < clip.c + clip.cols;
+  try {
+    return print(mapRefs(parse(f), (ref) => (ref.t === "ref" && ref.sheet === undefined && !ref.ar && !ref.ac && inside(ref.r, ref.c) ? { ...ref, r: at.r + ref.c - clip.c, c: at.c + ref.r - clip.r } : shifted(ref, dr, dc))));
+  } catch {
+    return f;
   }
 }
 

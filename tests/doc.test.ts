@@ -123,3 +123,37 @@ describe("editing a sheet", () => {
     expect(d.sheet.cells.has(key(1, 1))).toBe(true);
   });
 });
+
+describe("paste special", () => {
+  const setup = () => {
+    const doc = new Doc(newWorkbook());
+    doc.setInput(0, 0, "2");
+    doc.setInput(1, 0, "=A1*10");
+    doc.format({ r1: 0, c1: 0, r2: 1, c2: 0 }, { bold: true });
+    doc.format({ r1: 0, c1: 2, r2: 1, c2: 2 }, { italic: true });
+    return { doc, clip: doc.copy({ r1: 0, c1: 0, r2: 1, c2: 0 }, false) };
+  };
+  const bold = (doc: Doc, r: number, c: number) => !!lookOf(doc.book.styles, doc.cell(r, c)?.s).font.bold;
+  const italic = (doc: Doc, r: number, c: number) => !!lookOf(doc.book.styles, doc.cell(r, c)?.s).font.italic;
+
+  it("pastes values only, keeping the formats already there", () => {
+    const { doc, clip } = setup();
+    doc.paste(clip, { r: 0, c: 2 }, { what: "values" });
+    expect([doc.cell(1, 2)?.f, doc.value(1, 2), bold(doc, 1, 2), italic(doc, 1, 2)]).toEqual([undefined, 20, false, true]);
+  });
+
+  it("pastes formulas (moved along) or formats only", () => {
+    const { doc, clip } = setup();
+    doc.paste(clip, { r: 4, c: 2 }, { what: "formulas" });
+    expect([doc.cell(5, 2)?.f, bold(doc, 5, 2)]).toEqual(["C5*10", false]);
+    doc.setInput(0, 3, "keep me");
+    doc.paste(clip, { r: 0, c: 3 }, { what: "formats" });
+    expect([doc.value(0, 3), bold(doc, 0, 3)]).toEqual(["keep me", true]);
+  });
+
+  it("turns rows into columns", () => {
+    const { doc, clip } = setup();
+    doc.paste(clip, { r: 9, c: 0 }, { transpose: true });
+    expect([doc.value(9, 0), doc.cell(9, 1)?.f]).toEqual([2, "A10*10"]);
+  });
+});

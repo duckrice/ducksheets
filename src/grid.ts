@@ -133,6 +133,8 @@ export class Grid {
 
   /** What conditional formatting does to the sheet's cells, worked out when first needed after a change. */
   private cf: Map<number, CfEffect> | null = null;
+  /** Ctrl+`: formulas shown in the cells instead of their results. */
+  showFormulas = false;
 
   get effects(): Map<number, CfEffect> {
     if (!this.cf) {
@@ -485,7 +487,7 @@ export class Grid {
     const value = this.doc.value(r, c);
     if (value === null) return;
     const look = lookOf(this.doc.book.styles, cell.s);
-    const shown = formatValue(value, look.numFmt, this.doc.book.date1904);
+    const shown = this.showFormulas && cell.f !== undefined ? { text: `=${cell.f}` } as ReturnType<typeof formatValue> : formatValue(value, look.numFmt, this.doc.book.date1904);
     if (!shown.text) return;
     const ctx = this.ctx;
     const effect = this.effects.get(key(r, c));
