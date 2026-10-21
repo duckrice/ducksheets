@@ -69,6 +69,8 @@ export interface GridHooks {
   /** Whether the editor wants clicks to insert references (a formula being typed). */
   pointing(): boolean;
   point(range: Range, sheet: number): void;
+  /** Puts in what's being typed, if anything (a click elsewhere does that, as in Excel). */
+  finishEditing(): void;
   contextMenu(x: number, y: number, on: "cell" | "row" | "col"): void;
   filterMenu(col: number, x: number, y: number): void;
 }
@@ -819,6 +821,9 @@ export class Grid {
       this.scroller.setPointerCapture(e.pointerId);
       return;
     }
+    // Clicking anywhere else on the sheet finishes what's being typed, as in Excel; otherwise
+    // the keys would still go to the cell that was being typed in.
+    this.hooks.finishEditing();
     switch (hit.kind) {
       case "corner":
         this.setSel(0, 0, MAX_ROWS - 1, MAX_COLS - 1);

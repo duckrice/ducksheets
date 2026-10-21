@@ -46,6 +46,9 @@ function mount(next: Doc) {
     selectionChanged: () => refreshSelection(),
     pointing: () => editor.pointing(),
     point: (range, sheet) => editor.point(range, sheet),
+    finishEditing: () => {
+      if (editor.active) editor.finish("none");
+    },
     contextMenu: (x, y, on) => contextMenu(x, y, on),
     filterMenu: (col, x, y) => filterMenu(col, x, y),
   });
