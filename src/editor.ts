@@ -116,7 +116,7 @@ export class Editor {
     this.hooks.changed();
   }
 
-  /** Puts the box over the cell, in the cell's font, growing to fit the text. */
+  /** Puts the box over the cell, in the cell's font and colours, so typing looks like it's in the cell; it grows to fit the text. */
   private place() {
     if (!this.editing) return;
     this.grid.reveal(this.editing.r, this.editing.c);
@@ -130,6 +130,8 @@ export class Editor {
       minHeight: `${cell.h + 2}px`,
       font: `${look.font.italic ? "italic " : ""}${look.font.bold ? "bold " : ""}${((look.font.size * 4) / 3) * z}px "${look.font.name}", "Segoe UI", sans-serif`,
       textAlign: look.h === "center" || look.h === "right" ? look.h : "left",
+      background: look.fill ?? "#ffffff",
+      color: look.font.color ?? "#000000",
     });
     this.fit();
   }

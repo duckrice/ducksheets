@@ -76,6 +76,12 @@ function mount(next: Doc) {
   );
   app.replaceChildren(toolbar.el, editor.bar, grid.el, h("div", { class: "bottom" }, tabs, h("div", { class: "statusbar" }, status, summary, zoomBar)));
   grid.el.addEventListener("keydown", keydown);
+  // As in Excel, typing goes to the selected cell even after clicking a toolbar button.
+  window.addEventListener("keydown", (e) => {
+    const target = e.target as Element;
+    if (e.defaultPrevented || grid.el.contains(target) || isTyping(target) || target.closest?.("dialog, .menu") || (target.tagName === "BUTTON" && (e.key === "Enter" || e.key === " "))) return;
+    keydown(e);
+  });
   grid.el.addEventListener("wheel", wheel, { passive: false });
   grid.el.addEventListener(
     "scroll",

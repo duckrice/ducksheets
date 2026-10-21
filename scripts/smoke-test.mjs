@@ -330,6 +330,20 @@ await session(9801, async (app) => {
     await app.evaluate(`(() => { const d = window.__ducksheets.doc; d.sel = { r: 3, c: 1, ar: 3, ac: 1 }; d.emit(); window.__ducksheets.grid.setZoom(1); })()`);
     await app.shot(shot);
   }
+  // As in Excel: click a cell, then just type, even after using the toolbar; the cell keeps its colours while typing.
+  await app.evaluate(`(() => { const d = window.__ducksheets.doc; d.format({ r1: 15, c1: 3, r2: 15, c2: 3 }, { fill: "#ffff00", color: "#c00000" }); })()`);
+  const [cx, cy] = await s.at(15, 3);
+  await app.click(cx, cy);
+  await app.clickOn('.toolbar [title^="Bold"]');
+  await app.clickOn('.toolbar [title^="Bold"]');
+  await app.send("Input.dispatchKeyEvent", { type: "keyDown", key: "7", text: "7", unmodifiedText: "7" });
+  await app.send("Input.dispatchKeyEvent", { type: "keyUp", key: "7" });
+  const typing = await app.evaluate(`(() => { const b = document.querySelector(".cell-editor"); const st = getComputedStyle(b); return [b.hidden, b.value, st.backgroundColor, st.color, document.activeElement === b].join("|"); })()`);
+  check("clicking a cell and typing writes into it, even after clicking the toolbar", typing.startsWith("false|7|"), typing);
+  check("in the cell's own colours", typing.includes("rgb(255, 255, 0)|rgb(192, 0, 0)|true"), typing);
+  await app.key("Enter", 13);
+  check("and Enter puts it in", (await s.value(15, 3)) === 7);
+
   check("no errors in the app", app.errors.length === 0, app.errors.join("; "));
 
   // Closing with changes asks whether to save.
