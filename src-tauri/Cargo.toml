@@ -1,6 +1,6 @@
 [package]
 name = "ducksheets"
-version = "1.0.2"
+version = "1.0.3"
 description = "A spreadsheet that opens and saves Excel workbooks"
 authors = ["Duckrice"]
 edition = "2021"
