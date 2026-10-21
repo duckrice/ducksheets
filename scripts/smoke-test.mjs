@@ -392,6 +392,16 @@ await session(9801, async (app) => {
   await app.click(px, py);
   check("the format painter gives the formats to the cell clicked", await app.waitFor(`window.__ducksheets.doc.book.styles.fonts[window.__ducksheets.doc.book.styles.xfs[window.__ducksheets.doc.cell(52, 0)?.s ?? 0].fontId]?.bold === true`, 3000));
 
+  // Notes: Shift+F2 writes one; the mouse over the cell shows it.
+  await s.select(60, 1);
+  await app.key("F2", 113, 8);
+  check("Shift+F2 asks for a note", await app.waitFor(`!!document.querySelector(".note-input")`, 3000));
+  await app.evaluate(`(() => { document.querySelector(".note-input").value = "Remember the deposit"; [...document.querySelectorAll('[aria-label="Note"] .btn')].find((b) => b.textContent === "OK").click(); })()`);
+  check("and puts it on the cell", (await app.evaluate(`window.__ducksheets.doc.sheet.notes.get(60 * 16384 + 1)?.text`)) === "Remember the deposit");
+  const [nx, ny] = await s.at(60, 1);
+  await app.mouse("mouseMoved", nx, ny, { buttons: 0 });
+  check("the mouse over the cell shows the note", await app.waitFor(`(() => { const t = document.querySelector(".note-tip"); return !t.hidden && t.textContent.includes("Remember the deposit"); })()`, 2000));
+
   // Ctrl+` shows formulas.
   await app.send("Input.dispatchKeyEvent", { type: "keyDown", key: "`", code: "Backquote", windowsVirtualKeyCode: 192, modifiers: 2 });
   await app.send("Input.dispatchKeyEvent", { type: "keyUp", key: "`", code: "Backquote", windowsVirtualKeyCode: 192, modifiers: 2 });

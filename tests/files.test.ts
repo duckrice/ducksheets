@@ -145,3 +145,21 @@ describe("CSV", () => {
     expect(csv).toContain("2026-10-20");
   });
 });
+
+describe("links between the parts of a file", () => {
+  it("gives a new chart a link ID the sheet doesn't use yet", async () => {
+    const book: Workbook = { sheets: [newSheet("S")], styles: defaultStyles(), date1904: false, names: new Map() };
+    book.sheets[0].cells.set(key(0, 0), { v: 1 });
+    // A sheet that already links to something (as Excel's printer settings do), with ID rId1.
+    const zip = await JSZip.loadAsync(await writeXlsx(book, new Calculator(book)));
+    const relsPath = "xl/worksheets/_rels/sheet1.xml.rels";
+    zip.file(relsPath, '<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/printerSettings" Target="../printerSettings/printerSettings1.bin"/></Relationships>');
+    zip.file("xl/printerSettings/printerSettings1.bin", new Uint8Array([0]));
+    const again = await readXlsx(await zip.generateAsync({ type: "uint8array" }));
+    again.sheets[0].charts.push({ id: "c", kind: "column", title: "", data: { r1: 0, c1: 0, r2: 0, c2: 0 }, at: { r: 2, c: 2, dx: 0, dy: 0, w: 300, h: 200 } });
+    const out = await JSZip.loadAsync(await writeXlsx(again, new Calculator(again)));
+    const ids = [...((await out.file(relsPath)!.async("string")).matchAll(/Id="([^"]+)"/g))].map((m) => m[1]);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids.length).toBe(2);
+  });
+});

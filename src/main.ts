@@ -15,7 +15,7 @@ import { readCsv, writeCsv } from "./csv";
 import { readXlsx } from "./xlsx/read";
 import { writeXlsx } from "./xlsx/write";
 import { lookOf } from "./xlsx/styles";
-import { ask, askName, askSave, menu, popover, toast, type MenuItem } from "./ui";
+import { ask, askName, askSave, menu, modal, popover, toast, type MenuItem } from "./ui";
 import { baseName, onCloseRequested, onFilesOpened, pickFile, pickSavePath, readPath, setTitle, startupFiles, writePath, type OpenedFile } from "./platform";
 import { offerUpdate } from "./updates";
 import { insertChart, renderCharts } from "./charts";
@@ -98,6 +98,10 @@ function mount(next: Doc) {
   app.replaceChildren(toolbar.el, editor.bar, grid.el, h("div", { class: "bottom" }, tabs, h("div", { class: "statusbar" }, status, summary, zoomBar)));
   pick = h("button", { type: "button", class: "list-pick", hidden: true, title: "Choose from the list (Alt+Down)", "aria-label": "Choose from the list", html: icon("caret", 14), onmousedown: (e: Event) => e.preventDefault(), onclick: () => openPick() }) as HTMLButtonElement;
   grid.el.append(pick);
+  noteTip = h("div", { class: "note-tip", role: "tooltip", hidden: true });
+  grid.el.append(noteTip);
+  grid.el.addEventListener("pointermove", showNoteTip);
+  grid.el.addEventListener("pointerleave", () => (noteTip.hidden = true));
   grid.el.addEventListener("keydown", keydown);
   // As in Excel, typing goes to the selected cell even after clicking a toolbar button.
   window.addEventListener("keydown", (e) => {
@@ -344,7 +348,8 @@ function keydown(e: KeyboardEvent) {
       else go(r + (e.key === "PageDown" ? grid.pageRows : -grid.pageRows), c, e.shiftKey);
       return done();
     case "F2":
-      editor.start();
+      if (e.shiftKey) editNote();
+      else editor.start();
       return done();
     case "F11":
       if (e.shiftKey) {
@@ -576,6 +581,40 @@ function stopPainter() {
   toolbar.update();
 }
 
+/** A note on the selected cell: written or changed in a box; emptied, it goes. */
+function editNote() {
+  const { r, c } = doc.sel;
+  const note = doc.sheet.notes.get(key(r, c));
+  const text = h("textarea", { class: "tb-input wide note-input", rows: 5, "aria-label": "Note" }) as HTMLTextAreaElement;
+  text.value = note?.text ?? "";
+  const ok = h("button", { type: "button", class: "btn primary" }, "OK");
+  const cancel = h("button", { type: "button", class: "btn" }, "Cancel");
+  const close = modal(h("div", { class: "dialog", role: "dialog", "aria-label": "Note" }, h("h2", {}, `Note on ${rangeAddress({ r1: r, c1: c, r2: r, c2: c })}`), text, h("div", { class: "dialog-buttons" }, cancel, ok)), (event) => {
+    if (event.key === "Escape") close();
+    if (event.key === "Enter" && event.ctrlKey) finish();
+  });
+  const finish = () => {
+    close();
+    doc.setNote(r, c, text.value, note?.author ?? "");
+    grid.el.focus({ preventScroll: true });
+  };
+  ok.addEventListener("click", finish);
+  cancel.addEventListener("click", close);
+  text.focus();
+}
+
+/** Shows a cell's note while the mouse is over the cell. */
+let noteTip: HTMLElement;
+function showNoteTip(e: PointerEvent) {
+  const at = editor.active ? null : grid.cellAtMouse(e);
+  const note = at && doc.sheet.notes.get(key(at.r, at.c));
+  noteTip.hidden = !note;
+  if (!note || !at) return;
+  noteTip.replaceChildren(...(note.author ? [h("strong", {}, note.author), h("br")] : []), note.text);
+  const box = grid.cellBox(at.r, at.c);
+  Object.assign(noteTip.style, { left: `${box.x + box.w + 6}px`, top: `${box.y}px` });
+}
+
 /** Paste special: what was copied in DuckSheets, pasted as values, formulas or formats only. */
 async function pasteSpecialHere() {
   const text = await navigator.clipboard.readText().catch(() => "");
@@ -634,6 +673,11 @@ function contextMenu(x: number, y: number, on: "cell" | "row" | "col") {
     );
   }
   if (on === "cell") items.push({ label: "Merge and centre", action: () => doc.toggleMerge(grid.expanded(range)) });
+  if (on === "cell") {
+    const has = doc.sheet.notes.has(key(doc.sel.r, doc.sel.c));
+    items.push({ label: has ? "Edit note… (Shift+F2)" : "New note… (Shift+F2)", action: () => editNote() });
+    if (has) items.push({ label: "Delete note", action: () => doc.setNote(doc.sel.r, doc.sel.c, "", "") });
+  }
   items.push({ label: "Format cells… (Ctrl+1)", action: () => formatCells(doc, grid) });
   // A menu needs something to sit under: a tiny element where the mouse is.
   const at = h("div", { class: "menu-anchor" });

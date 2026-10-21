@@ -800,3 +800,28 @@ body {
   height: 0;
   border: 0;
 }
+
+/* A cell's note, shown while the mouse is over the cell. */
+.note-tip {
+  position: absolute;
+  z-index: 6;
+  max-width: 260px;
+  padding: 6px 8px;
+  border: 1px solid #c9b458;
+  background: #ffffe1;
+  color: #1f2933;
+  font: 12px/1.4 "Segoe UI", system-ui, sans-serif;
+  white-space: pre-wrap;
+  box-shadow: 1px 2px 4px rgb(0 0 0 / 0.2);
+  pointer-events: none;
+}
+
+.note-tip[hidden] {
+  display: none;
+}
+
+.note-input {
+  min-height: 100px;
+  resize: vertical;
+  font: inherit;
+}

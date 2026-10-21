@@ -404,6 +404,22 @@ export class Grid {
     // Merged cells that start above or left of the view still show their text.
     for (const m of merges) if (m.r1 < r0 || m.c1 < c0) this.drawText(m.r1, m.c1, m, c1);
 
+    // A red corner on cells with a note, as in Excel.
+    ctx.fillStyle = "#d32f2f";
+    for (const k of sheet.notes.keys()) {
+      const r = Math.floor(k / MAX_COLS);
+      const c = k % MAX_COLS;
+      if (r < r0 || r > r1 || c < c0 || c > c1 || sheet.hiddenRows.has(r) || sheet.hiddenCols.has(c)) continue;
+      const box = this.cellBox(r, c);
+      const right = (box.x + box.w) / this.zoom;
+      const top = box.y / this.zoom;
+      ctx.beginPath();
+      ctx.moveTo(right - 7, top);
+      ctx.lineTo(right - 1, top);
+      ctx.lineTo(right - 1, top + 6);
+      ctx.fill();
+    }
+
     // Borders.
     for (const r of visibleRows)
       for (const c of visibleCols) {
@@ -740,6 +756,13 @@ export class Grid {
   }
 
   // ---- the mouse ---------------------------------------------------------------------------------
+
+  /** The cell under the mouse, if it's over a cell. */
+  cellAtMouse(e: MouseEvent): { r: number; c: number } | null {
+    const { x, y } = this.local(e);
+    const hit = this.hit(x, y);
+    return hit.kind === "cell" ? { r: hit.r, c: hit.c } : null;
+  }
 
   private local(e: MouseEvent) {
     const rect = this.el.getBoundingClientRect();

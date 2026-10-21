@@ -15,6 +15,7 @@ import { chartData } from "../chartdata";
 import { conditionalXml } from "../conditional";
 import { ARRAY_FUNCTIONS } from "../calc";
 import { validationsXml } from "../validation";
+import { writeNotes } from "./notes";
 
 const MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
 const REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
@@ -183,7 +184,7 @@ function filterXml(sheet: Sheet): string | null {
   return `<autoFilter ref="${rangeAddress(sheet.filter.range)}">${columns.join("")}</autoFilter>`;
 }
 
-function sheetXml(sheet: Sheet, index: number, calc: Calculator, strings: SharedStrings, selected: boolean, drawing: string | null): string {
+function sheetXml(sheet: Sheet, index: number, calc: Calculator, strings: SharedStrings, selected: boolean, drawing: string | null, legacy: string | null | undefined): string {
   const used = usedRange(sheet);
   const doc = xml(sheet.origin?.xml ?? `<worksheet xmlns="${MAIN}" xmlns:r="${REL}"><sheetData/><pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/></worksheet>`);
   setPart(doc, "dimension", `<dimension ref="${used ? rangeAddress(used) : "A1"}"/>`);
@@ -205,6 +206,7 @@ function sheetXml(sheet: Sheet, index: number, calc: Calculator, strings: Shared
   if (drawing && !Array.from(doc.documentElement.children).some((el) => el.localName === "drawing")) setPart(doc, "drawing", `<drawing r:id="${drawing}"/>`);
   setPart(doc, "conditionalFormatting", conditionalXml(sheet.conditional));
   setPart(doc, "dataValidations", validationsXml(sheet.validations));
+  if (legacy !== undefined) setPart(doc, "legacyDrawing", legacy ? `<legacyDrawing r:id="${legacy}"/>` : null);
   setPart(doc, "mergeCells", sheet.merges.length ? `<mergeCells count="${sheet.merges.length}">${sheet.merges.map((m) => `<mergeCell ref="${rangeAddress(m)}"/>`).join("")}</mergeCells>` : null);
   return serialize(doc);
 }
@@ -249,7 +251,7 @@ async function writeDrawing(zip: JSZip, book: Workbook, calc: Calculator, index:
     override(path, null);
     for (const el of Array.from(relRoot.children)) if (resolvePath(drawingPath, el.getAttribute("Target") ?? "") === path) relRoot.removeChild(el);
   }
-  let nextRel = Math.max(0, ...Array.from(relRoot.children).map((el) => Number((el.getAttribute("Id") ?? "").replace(/D/g, "")) || 0)) + 1;
+  let nextRel = Math.max(0, ...Array.from(relRoot.children).map((el) => Number((el.getAttribute("Id") ?? "").replace(/\D/g, "")) || 0)) + 1;
   let nextShape = Math.max(1, ...Array.from(drawingDoc.getElementsByTagNameNS("*", "cNvPr")).map((el) => Number(el.getAttribute("id")) || 0)) + 1;
   let k = 1;
   for (const chart of sheet.charts) {
@@ -280,7 +282,7 @@ async function writeDrawing(zip: JSZip, book: Workbook, calc: Calculator, index:
   const sheetRelsPath = relsPath(sheetPath);
   const sheetRels = xml((await zip.file(sheetRelsPath)?.async("string")) ?? emptyRels);
   const root = sheetRels.documentElement;
-  const id = `rId${Math.max(0, ...Array.from(root.children).map((el) => Number((el.getAttribute("Id") ?? "").replace(/D/g, "")) || 0)) + 1}`;
+  const id = `rId${Math.max(0, ...Array.from(root.children).map((el) => Number((el.getAttribute("Id") ?? "").replace(/\D/g, "")) || 0)) + 1}`;
   const rel = sheetRels.createElementNS(PKG_REL, "Relationship");
   rel.setAttribute("Id", id);
   rel.setAttribute("Type", `${REL}/drawing`);
@@ -359,7 +361,8 @@ export async function writeXlsx(book: Workbook, calc: Calculator, active = 0): P
     }
     keepPaths.add(path);
     const drawing = await writeDrawing(zip, book, calc, i, path, override);
-    zip.file(path, sheetXml(sheet, i, calc, strings, i === active, drawing));
+    const legacy = await writeNotes(zip, sheet, path, override);
+    zip.file(path, sheetXml(sheet, i, calc, strings, i === active, drawing, legacy));
     override(path, CONTENT.sheet);
     const id = addRel(TYPE.sheet, path);
     sheetEls.push(`<sheet name="${esc(sheet.name)}" sheetId="${i + 1}" r:id="${id}"/>`);
@@ -397,6 +400,14 @@ export async function writeXlsx(book: Workbook, calc: Calculator, active = 0): P
   if (book.date1904) {
     const pr = Array.from(wb.children).find((el) => el.localName === "workbookPr");
     pr?.setAttribute("date1904", "1");
+  }
+
+  // Notes' boxes are VML drawings, which need their type listed.
+  if (book.sheets.some((s) => s.notes.size) && !Array.from(typesDoc.documentElement.children).some((el) => el.localName === "Default" && el.getAttribute("Extension") === "vml")) {
+    const el = typesDoc.createElementNS("http://schemas.openxmlformats.org/package/2006/content-types", "Default");
+    el.setAttribute("Extension", "vml");
+    el.setAttribute("ContentType", "application/vnd.openxmlformats-officedocument.vmlDrawing");
+    typesDoc.documentElement.insertBefore(el, typesDoc.documentElement.firstChild);
   }
 
   // Dynamic arrays need Excel's metadata saying cm="1" means "a dynamic array"; a file's own is kept.

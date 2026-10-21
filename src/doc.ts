@@ -10,6 +10,7 @@ import { editText, formatValue, isDateFormat, locale, parseInput } from "./numfm
 import { defaultStyles, lookOf, withStyle, type StyleChange } from "./xlsx/styles";
 import { dxfXml, withoutRules, type CfRule, type CfStyle } from "./conditional";
 import { withoutValidation, type Validation } from "./validation";
+import type { Note } from "./xlsx/notes";
 
 export interface Selection {
   /** The active cell. */
@@ -43,6 +44,7 @@ function cloneSheet(s: Sheet): Sheet {
     charts: [...s.charts],
     conditional: [...s.conditional],
     validations: [...s.validations],
+    notes: new Map(s.notes),
   };
 }
 
@@ -303,6 +305,14 @@ export class Doc {
     });
   }
 
+  /** Puts a note on a cell, or (empty text) takes it off. */
+  setNote(r: number, c: number, text: string, author: string) {
+    this.change(() => {
+      if (text.trim()) this.sheet.notes.set(key(r, c), { text, author });
+      else this.sheet.notes.delete(key(r, c));
+    });
+  }
+
   /** Takes the rules off a block of cells, or (null) the whole sheet. */
   clearRules(range: Range | null) {
     this.change(() => {
@@ -437,6 +447,14 @@ export class Doc {
         cells.set(axis === "r" ? key(i, c) : key(r, i), cell);
       }
       sheet.cells = cells;
+      const notes = new Map<number, Note>();
+      for (const [k, note] of sheet.notes) {
+        const r = rowOf(k);
+        const c = colOf(k);
+        const i = move(axis === "r" ? r : c);
+        if (i !== null) notes.set(axis === "r" ? key(i, c) : key(r, i), note);
+      }
+      sheet.notes = notes;
       const sizes = axis === "r" ? sheet.rowHeights : sheet.colWidths;
       const moved = new Map<number, number>();
       for (const [i, size] of sizes) {

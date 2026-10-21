@@ -5,6 +5,7 @@
 
 import type { CfBlock } from "./conditional";
 import type { Validation } from "./validation";
+import type { Note } from "./xlsx/notes";
 import type { Styles } from "./xlsx/styles";
 
 /** An Excel error value, like #DIV/0! */
@@ -77,6 +78,8 @@ export interface Sheet {
   conditional: CfBlock[];
   /** Data validation: drop-down lists and limits on what can be typed. */
   validations: Validation[];
+  /** Notes on cells (Excel's comments), by cell. */
+  notes: Map<number, Note>;
   defaultColWidth: number;
   defaultRowHeight: number;
   /** For a sheet read from an .xlsx file: its part in the file and its XML, so what isn't edited here is kept. */
@@ -113,6 +116,7 @@ export function newSheet(name: string): Sheet {
     charts: [],
     conditional: [],
     validations: [],
+    notes: new Map(),
     defaultColWidth: 64,
     defaultRowHeight: 20,
   };
