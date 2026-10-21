@@ -289,8 +289,9 @@ body {
   position: absolute;
   z-index: 5;
   margin: 0;
-  padding: 1px 3px;
-  border: 2px solid var(--accent);
+  box-sizing: border-box;
+  padding: 0 1px;
+  border: none;
   background: #ffffff;
   color: #000000;
   caret-color: currentColor;

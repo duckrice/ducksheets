@@ -123,12 +123,15 @@ export class Editor {
     const cell = this.grid.cellBox(this.editing.r, this.editing.c);
     const look = lookOf(this.doc.book.styles, this.doc.cell(this.editing.r, this.editing.c)?.s);
     const z = this.grid.zoom;
+    // Inside the selection border, text where the cell shows it (at the bottom, 3 px in), no frame of its own.
+    const size = ((look.font.size * 4) / 3) * z;
     Object.assign(this.box.style, {
-      left: `${cell.x - 1}px`,
-      top: `${cell.y - 1}px`,
-      minWidth: `${cell.w + 2}px`,
-      minHeight: `${cell.h + 2}px`,
-      font: `${look.font.italic ? "italic " : ""}${look.font.bold ? "bold " : ""}${((look.font.size * 4) / 3) * z}px "${look.font.name}", "Segoe UI", sans-serif`,
+      left: `${cell.x + 2}px`,
+      top: `${cell.y + 2}px`,
+      minWidth: `${Math.max(4, cell.w - 4)}px`,
+      minHeight: `${Math.max(4, cell.h - 4)}px`,
+      paddingTop: `${Math.max(0, cell.h - 5 - size * 1.25)}px`,
+      font: `${look.font.italic ? "italic " : ""}${look.font.bold ? "bold " : ""}${size}px "${look.font.name}", "Segoe UI", sans-serif`,
       textAlign: look.h === "center" || look.h === "right" ? look.h : "left",
       background: look.fill ?? "#ffffff",
       color: look.font.color ?? "#000000",
@@ -141,7 +144,7 @@ export class Editor {
     box.style.width = "0px";
     box.style.height = "0px";
     const max = this.grid.el.clientWidth - box.offsetLeft - 4;
-    box.style.width = `${Math.min(max, box.scrollWidth + 12)}px`;
+    box.style.width = `${Math.min(max, box.scrollWidth)}px`;
     box.style.height = `${box.scrollHeight}px`;
   }
 
