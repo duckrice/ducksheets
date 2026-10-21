@@ -483,11 +483,10 @@ export class Grid {
   private drawText(r: number, c: number, merge: Range | undefined, lastCol: number) {
     const sheet = this.doc.sheet;
     const cell = sheet.cells.get(key(r, c));
-    if (!cell) return;
     const value = this.doc.value(r, c);
     if (value === null) return;
-    const look = lookOf(this.doc.book.styles, cell.s);
-    const shown = this.showFormulas && cell.f !== undefined ? { text: `=${cell.f}` } as ReturnType<typeof formatValue> : formatValue(value, look.numFmt, this.doc.book.date1904);
+    const look = lookOf(this.doc.book.styles, cell?.s);
+    const shown = this.showFormulas && cell?.f !== undefined ? { text: `=${cell.f}` } as ReturnType<typeof formatValue> : formatValue(value, look.numFmt, this.doc.book.date1904);
     if (!shown.text) return;
     const ctx = this.ctx;
     const effect = this.effects.get(key(r, c));

@@ -23,7 +23,18 @@ export class RangeValue {
   }
 }
 
-export type Value = Scalar | RangeValue;
+/** Values worked out by a formula rather than read from cells, row by row (FILTER, SORT, A1:A9>5 inside FILTER…). */
+export class ArrayValue {
+  constructor(public values: Scalar[][]) {}
+  get rows() {
+    return this.values.length;
+  }
+  get cols() {
+    return this.values[0]?.length ?? 0;
+  }
+}
+
+export type Value = Scalar | RangeValue | ArrayValue;
 
 export interface EvalContext {
   /** Where the formula is. */
@@ -39,6 +50,8 @@ export interface EvalContext {
   /** A named range's formula text, if there is such a name. */
   name(name: string): string | undefined;
   date1904: boolean;
+  /** Inside functions that take arrays (FILTER, SORT, SUMPRODUCT…): A1:A9>5 compares every cell, giving an array. */
+  arrays?: boolean;
 }
 
 export const err = (code: CellError["code"]) => new CellError(code);
@@ -88,16 +101,49 @@ export function evaluate(node: Node, ctx: EvalContext): Value {
       return fn(node.args, ctx);
     }
     case "un": {
-      const v = toNumber(scalar(evaluate(node.e, ctx), ctx));
+      const e = evaluate(node.e, ctx);
+      if (spreads(e, ctx)) return elementwise(node.op === "-" ? "*" : "+", e, node.op === "-" ? -1 : 0, ctx);
+      const v = toNumber(scalar(e, ctx));
       return isErr(v) ? v : node.op === "-" ? -v : v;
     }
     case "pct": {
       const v = toNumber(scalar(evaluate(node.e, ctx), ctx));
       return isErr(v) ? v : v / 100;
     }
-    case "bin":
-      return binary(node.op, scalar(evaluate(node.l, ctx), ctx), scalar(evaluate(node.r, ctx), ctx));
+    case "bin": {
+      const l = evaluate(node.l, ctx);
+      const r = evaluate(node.r, ctx);
+      if (spreads(l, ctx) || spreads(r, ctx)) return elementwise(node.op, l, r, ctx);
+      return binary(node.op, scalar(l, ctx), scalar(r, ctx));
+    }
   }
+}
+
+/** Whether an operator works cell by cell on this value: an array always, a range only where arrays are expected. */
+function spreads(v: Value, ctx: EvalContext): boolean {
+  return v instanceof ArrayValue ? v.rows * v.cols > 1 : !!ctx.arrays && v instanceof RangeValue && v.rows * v.cols > 1;
+}
+
+/** An operator applied cell by cell; a single row or column (or value) is used for every row or column, as in Excel. */
+function elementwise(op: string, l: Value, r: Value, ctx: EvalContext): ArrayValue {
+  const a = toGrid(l, ctx);
+  const b = toGrid(r, ctx);
+  const rows = Math.max(a.length, b.length);
+  const cols = Math.max(a[0].length, b[0].length);
+  const at = (g: Scalar[][], i: number, j: number): Scalar => {
+    const row = g.length === 1 ? g[0] : g[i];
+    if (!row) return err("#N/A");
+    const v = row.length === 1 ? row[0] : row[j];
+    return v === undefined ? err("#N/A") : v;
+  };
+  return new ArrayValue(Array.from({ length: rows }, (_, i) => Array.from({ length: cols }, (_, j) => binary(op, at(a, i, j), at(b, i, j)))));
+}
+
+/** Any value as rows of values. */
+export function toGrid(v: Value, ctx: EvalContext): Scalar[][] {
+  if (v instanceof ArrayValue) return v.values;
+  if (v instanceof RangeValue) return Array.from({ length: v.rows }, (_, i) => Array.from({ length: v.cols }, (_, j) => ctx.cell(v.sheet, v.r1 + i, v.c1 + j)));
+  return [[v]];
 }
 
 function binary(op: string, a: Scalar, b: Scalar): Scalar {
@@ -133,6 +179,7 @@ function binary(op: string, a: Scalar, b: Scalar): Scalar {
 
 /** One value from what may be a range: the cell in the formula's row or column. */
 export function scalar(v: Value, ctx: EvalContext): Scalar {
+  if (v instanceof ArrayValue) return v.values[0]?.[0] ?? null;
   if (!(v instanceof RangeValue)) return v;
   if (v.rows === 1 && v.cols === 1) return ctx.cell(v.sheet, v.r1, v.c1);
   if (v.cols === 1 && ctx.row >= v.r1 && ctx.row <= v.r2) return ctx.cell(v.sheet, ctx.row, v.c1);
@@ -187,7 +234,11 @@ export function compare(a: Scalar, b: Scalar): number {
 }
 
 /** Every cell value in a range, row by row. */
-export function* cellsOf(range: RangeValue, ctx: EvalContext): Generator<Scalar> {
+export function* cellsOf(range: RangeValue | ArrayValue, ctx: EvalContext): Generator<Scalar> {
+  if (range instanceof ArrayValue) {
+    for (const row of range.values) yield* row;
+    return;
+  }
   for (let r = range.r1; r <= range.r2; r++) for (let c = range.c1; c <= range.c2; c++) yield ctx.cell(range.sheet, r, c);
 }
 

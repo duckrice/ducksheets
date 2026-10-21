@@ -205,7 +205,8 @@ export function parse(text: string): Node {
       case "word": {
         if (tok.sheet === undefined && peek().k === "(") {
           next();
-          const name = tok.v.toUpperCase().replace(/^_XLFN\.|^_XLWS\./, "");
+          // Excel writes newer functions as _xlfn.NAME, and FILTER and SORT as _xlfn._xlws.NAME.
+          const name = tok.v.toUpperCase().replace(/^(?:_XLFN\.)?(?:_XLWS\.)?/, "");
           const args: Node[] = [];
           if (peek().k !== ")") {
             for (;;) {
@@ -266,7 +267,7 @@ const refText = (r: CellRef) => `${r.ac ? "$" : ""}${colName(r.c)}${r.ar ? "$" :
 /** Functions newer than Excel 2007, written with Excel's _xlfn. prefix in files. */
 export const NEW_FUNCTIONS = new Set([
   "XLOOKUP", "XMATCH", "IFS", "SWITCH", "CONCAT", "TEXTJOIN", "MAXIFS", "MINIFS", "IFNA", "XOR", "STDEV.S", "STDEV.P", "VAR.S", "VAR.P",
-  "DAYS", "ISOWEEKNUM", "FILTER", "SORT", "UNIQUE", "SEQUENCE", "LET", "CEILING.MATH", "FLOOR.MATH", "MODE.SNGL", "RANK.EQ", "PERCENTILE.INC", "QUARTILE.INC",
+  "DAYS", "ISOWEEKNUM", "FILTER", "SORT", "SORTBY", "UNIQUE", "SEQUENCE", "LET", "CEILING.MATH", "FLOOR.MATH", "MODE.SNGL", "RANK.EQ", "PERCENTILE.INC", "QUARTILE.INC",
 ]);
 
 /** The tree as formula text (without "="). `forFile` adds the prefixes Excel's files use. */
@@ -292,7 +293,7 @@ export function print(node: Node, forFile = false): string {
     case "name":
       return node.name;
     case "fn":
-      return `${forFile && NEW_FUNCTIONS.has(node.name) ? "_xlfn." : ""}${node.name}(${node.args.map(p).join(",")})`;
+      return `${forFile && NEW_FUNCTIONS.has(node.name) ? (node.name === "FILTER" || node.name === "SORT" ? "_xlfn._xlws." : "_xlfn.") : ""}${node.name}(${node.args.map(p).join(",")})`;
     case "un":
       return `${node.op}${p(node.e)}`;
     case "pct":

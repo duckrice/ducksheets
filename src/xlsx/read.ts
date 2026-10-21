@@ -5,10 +5,11 @@
 
 import JSZip from "jszip";
 import { FormulaError, parse, print, shifted } from "../formula/parse";
-import { CellError, MAX_COLS, MAX_ROWS, key, newSheet, parseRange, type Cell, type Scalar, type Sheet, type Workbook } from "../model";
+import { CellError, MAX_COLS, MAX_ROWS, key, newSheet, parseRange, type Cell, type Range, type Scalar, type Sheet, type Workbook } from "../model";
 import { readStyles, readTheme } from "./styles";
 import { readCharts } from "./charts";
 import { readConditional } from "../conditional";
+import { ARRAY_FUNCTIONS } from "../calc";
 import { readValidations } from "../validation";
 
 const MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
@@ -155,6 +156,8 @@ export function readSheet(name: string, text: string, strings: string[], theme: 
 
   // Shared formulas: the first cell holds the formula; the others say which one, and move it by their offset.
   const shared = new Map<string, { formula: string; r: number; c: number }>();
+  /** Blocks filled by dynamic array formulas: the values Excel saved in them are worked out again here. */
+  const spills: { range: Range; r: number; c: number }[] = [];
   let nextRow = 0;
   for (const row of kids(kid(ws, "sheetData"), "row")) {
     const r = row.getAttribute("r") ? Number(row.getAttribute("r")) - 1 : nextRow;
@@ -198,11 +201,23 @@ export function readSheet(name: string, text: string, strings: string[], theme: 
             }
           }
         } else if (fText) cell.f = formulaText(fText);
+        const block = f.getAttribute("t") === "array" ? parseRange(f.getAttribute("ref") ?? "") : null;
+        if (block && cell.f && ARRAY_FUNCTIONS.test(cell.f)) spills.push({ range: block, r, c: col });
       }
       if (cell.f === undefined && value !== null) cell.v = value;
       if (cell.f !== undefined || cell.v !== undefined || cell.s !== undefined) sheet.cells.set(key(r, col), cell);
     }
   }
+
+  for (const { range, r, c } of spills)
+    for (let i = range.r1; i <= range.r2; i++)
+      for (let j = range.c1; j <= range.c2; j++) {
+        const k = key(i, j);
+        const cell = sheet.cells.get(k);
+        if ((i === r && j === c) || !cell || cell.f !== undefined) continue;
+        if (cell.s !== undefined) sheet.cells.set(k, { s: cell.s });
+        else sheet.cells.delete(k);
+      }
 
   for (const m of kids(kid(ws, "mergeCells"), "mergeCell")) {
     const range = parseRange(m.getAttribute("ref") ?? "");

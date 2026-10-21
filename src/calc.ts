@@ -4,15 +4,23 @@
 // shortcut: recalculates the whole workbook after each change; fine for tens of thousands of formulas, track dependencies if bigger sheets get slow.
 
 import "./formula/functions";
-import { evaluate, scalar, type EvalContext } from "./formula/eval";
+import { ArrayValue, evaluate, scalar, type EvalContext } from "./formula/eval";
 import { FormulaError, parse, type Node } from "./formula/parse";
-import { CellError, address, colOf, key, rowOf, type Scalar, type Workbook } from "./model";
+import { CellError, address, colOf, key, rowOf, type Range, type Scalar, type Workbook } from "./model";
+
+/** Formulas whose results can fill more than one cell. */
+export const ARRAY_FUNCTIONS = /\b(FILTER|SORT|SORTBY|UNIQUE|SEQUENCE|TRANSPOSE)\s*\(/i;
 
 export class Calculator {
   private memo = new Map<number, Map<number, Scalar>>();
   private busy = new Set<string>();
   private trees = new Map<string, Node | FormulaError>();
   private extents = new Map<number, { rows: number; cols: number }>();
+  /** Values spilled by array formulas (FILTER, SORT…) into the cells around them, by sheet and cell. */
+  private spills = new Map<number, Map<number, Scalar>>();
+  /** The block each spilling formula fills, by sheet and the formula's cell. */
+  private spillRanges = new Map<number, Map<number, Range>>();
+  private spillsFound = false;
   /** A cell in a circular reference, if there is one ("Sheet1!A1"). */
   circular: string | null = null;
 
@@ -22,6 +30,9 @@ export class Calculator {
   reset() {
     this.memo.clear();
     this.extents.clear();
+    this.spills.clear();
+    this.spillRanges.clear();
+    this.spillsFound = false;
     this.circular = null;
   }
 
@@ -43,7 +54,7 @@ export class Calculator {
   /** A cell's value: what was typed, or what its formula gives. */
   value(sheet: number, r: number, c: number): Scalar {
     const cell = this.book.sheets[sheet]?.cells.get(key(r, c));
-    if (!cell) return null;
+    if (!cell || (cell.f === undefined && cell.v === undefined)) return this.spilled(sheet, r, c);
     if (cell.f === undefined) return cell.v ?? null;
     let memo = this.memo.get(sheet);
     if (!memo) this.memo.set(sheet, (memo = new Map()));
@@ -62,7 +73,8 @@ export class Calculator {
       if (tree instanceof FormulaError) result = new CellError("#NAME?");
       else {
         const ctx = this.context(sheet, r, c);
-        result = scalar(evaluate(tree, ctx), ctx);
+        const raw = evaluate(tree, ctx);
+        result = raw instanceof ArrayValue && raw.rows * raw.cols > 1 ? this.spill(sheet, r, c, raw) : scalar(raw, ctx);
       }
     } catch (error) {
       // A chain too long to follow at once (stack overflow) or a bug: never take the app down.
@@ -74,6 +86,40 @@ export class Calculator {
     if (typeof result === "number" && !Number.isFinite(result)) result = new CellError("#NUM!");
     memo.set(k, result);
     return result;
+  }
+
+  /** Puts an array formula's values in the cells from (r, c) on; #SPILL! if something is in the way, as in Excel. */
+  private spill(sheet: number, r: number, c: number, array: ArrayValue): Scalar {
+    const cells = this.book.sheets[sheet].cells;
+    for (let i = 0; i < array.rows; i++)
+      for (let j = 0; j < array.cols; j++) {
+        const other = (i || j) && cells.get(key(r + i, c + j));
+        if (other && (other.v !== undefined || other.f !== undefined)) return new CellError("#SPILL!");
+      }
+    let map = this.spills.get(sheet);
+    if (!map) this.spills.set(sheet, (map = new Map()));
+    for (let i = 0; i < array.rows; i++) for (let j = 0; j < array.cols; j++) if (i || j) map.set(key(r + i, c + j), array.values[i][j]);
+    let ranges = this.spillRanges.get(sheet);
+    if (!ranges) this.spillRanges.set(sheet, (ranges = new Map()));
+    ranges.set(key(r, c), { r1: r, c1: c, r2: r + array.rows - 1, c2: c + array.cols - 1 });
+    return array.values[0][0];
+  }
+
+  /** The value an array formula spilled into an empty cell, if any. Formulas that may spill are worked out first. */
+  private spilled(sheet: number, r: number, c: number): Scalar {
+    if (!this.spillsFound) {
+      this.spillsFound = true;
+      this.book.sheets.forEach((s, i) => {
+        for (const [k, cell] of s.cells) if (cell.f !== undefined && ARRAY_FUNCTIONS.test(cell.f)) this.value(i, rowOf(k), colOf(k));
+      });
+    }
+    return this.spills.get(sheet)?.get(key(r, c)) ?? null;
+  }
+
+  /** The block a formula's results fill, if it spills. */
+  spillRange(sheet: number, r: number, c: number): Range | undefined {
+    this.value(sheet, r, c);
+    return this.spillRanges.get(sheet)?.get(key(r, c));
   }
 
   /** What a formula (without its "=") gives at a cell, as if it were there; for rules like conditional formatting. */

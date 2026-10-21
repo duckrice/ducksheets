@@ -13,6 +13,7 @@ import { lookOf, writeStyles } from "./styles";
 import { EMPTY_DRAWING, anchorXml, chartXml } from "./charts";
 import { chartData } from "../chartdata";
 import { conditionalXml } from "../conditional";
+import { ARRAY_FUNCTIONS } from "../calc";
 import { validationsXml } from "../validation";
 
 const MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
@@ -23,6 +24,7 @@ const TYPE = {
   styles: `${REL}/styles`,
   strings: `${REL}/sharedStrings`,
   calcChain: `${REL}/calcChain`,
+  metadata: `${REL}/sheetMetadata`,
 };
 const CONTENT = {
   workbook: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml",
@@ -31,7 +33,12 @@ const CONTENT = {
   strings: "application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml",
   drawing: "application/vnd.openxmlformats-officedocument.drawing+xml",
   chart: "application/vnd.openxmlformats-officedocument.drawingml.chart+xml",
+  metadata: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheetMetadata+xml",
 };
+
+/** Excel's cell metadata for dynamic arrays: cells with cm="1" spill. */
+const DYNAMIC_ARRAY_METADATA = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<metadata xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:xda="http://schemas.microsoft.com/office/spreadsheetml/2017/dynamicarray"><metadataTypes count="1"><metadataType name="XLDAPR" minSupportedVersion="120000" copy="1" pasteAll="1" pasteValues="1" merge="1" splitFirst="1" rowColShift="1" clearFormats="1" clearComments="1" assign="1" coerce="1" cellMeta="1"/></metadataTypes><futureMetadata name="XLDAPR" count="1"><bk><extLst><ext uri="{bdbb8cdc-fa1e-496e-a857-3c3f30c029c3}"><xda:dynamicArrayProperties fDynamic="1" fCollapsed="0"/></ext></extLst></bk></futureMetadata><cellMetadata count="1"><bk><rc t="1" v="0"/></bk></cellMetadata></metadata>`;
 
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 // Characters XML can't hold at all; Excel writes them as _x001F_.
@@ -87,8 +94,18 @@ function valueXml(v: Scalar, strings: SharedStrings, formula: boolean): { t: str
 }
 
 function sheetDataXml(sheet: Sheet, index: number, calc: Calculator, strings: SharedStrings): string {
+  // Dynamic array formulas: the block each fills, and the values they put in the cells around them.
+  const spillRefs = new Map<number, string>();
+  const spilled = new Map<number, Scalar>();
+  for (const [k, cell] of sheet.cells) {
+    if (cell.f === undefined || !ARRAY_FUNCTIONS.test(cell.f)) continue;
+    const block = calc.spillRange(index, rowOf(k), colOf(k));
+    if (!block) continue;
+    spillRefs.set(k, rangeAddress(block));
+    for (let r = block.r1; r <= block.r2; r++) for (let c = block.c1; c <= block.c2; c++) if (key(r, c) !== k) spilled.set(key(r, c), calc.value(index, r, c));
+  }
   const rows = new Map<number, number[]>();
-  for (const k of sheet.cells.keys()) {
+  for (const k of new Set([...sheet.cells.keys(), ...spilled.keys()])) {
     const r = rowOf(k);
     let list = rows.get(r);
     if (!list) rows.set(r, (list = []));
@@ -103,9 +120,13 @@ function sheetDataXml(sheet: Sheet, index: number, calc: Calculator, strings: Sh
       .get(r)!
       .sort((a, b) => a - b)
       .map((k) => {
-        const cell = sheet.cells.get(k)!;
+        const cell = sheet.cells.get(k) ?? {};
         const ref = address(r, colOf(k));
         const s = cell.s ? ` s="${cell.s}"` : "";
+        if (spilled.has(k)) {
+          const v = valueXml(spilled.get(k)!, strings, true);
+          return v ? `<c r="${ref}"${s}${v.t}><v>${v.v}</v></c>` : `<c r="${ref}"${s}/>`;
+        }
         if (cell.f !== undefined) {
           let f = cell.f;
           try {
@@ -114,7 +135,10 @@ function sheetDataXml(sheet: Sheet, index: number, calc: Calculator, strings: Sh
             // Kept as typed.
           }
           const cached = valueXml(calc.value(index, r, colOf(k)), strings, true);
-          return `<c r="${ref}"${s}${cached?.t ?? ""}><f>${escText(f)}</f>${cached ? `<v>${cached.v}</v>` : ""}</c>`;
+          // A spilling formula is a dynamic array (cm="1" points at its entry in metadata.xml).
+          const spill = spillRefs.get(k);
+          const fXml = spill ? `<f t="array" ref="${spill}">${escText(f)}</f>` : `<f>${escText(f)}</f>`;
+          return `<c r="${ref}"${s}${cached?.t ?? ""}${spill ? ' cm="1"' : ""}>${fXml}${cached ? `<v>${cached.v}</v>` : ""}</c>`;
         }
         const v = valueXml(cell.v ?? null, strings, false);
         return v ? `<c r="${ref}"${s}${v.t}><v>${v.v}</v></c>` : `<c r="${ref}"${s}/>`;
@@ -373,6 +397,15 @@ export async function writeXlsx(book: Workbook, calc: Calculator, active = 0): P
   if (book.date1904) {
     const pr = Array.from(wb.children).find((el) => el.localName === "workbookPr");
     pr?.setAttribute("date1904", "1");
+  }
+
+  // Dynamic arrays need Excel's metadata saying cm="1" means "a dynamic array"; a file's own is kept.
+  const spilling = book.sheets.some((s, i) => [...s.cells].some(([k, cell]) => cell.f !== undefined && ARRAY_FUNCTIONS.test(cell.f) && !!calc.spillRange(i, rowOf(k), colOf(k))));
+  if (spilling && !relEls().some((el) => el.getAttribute("Type") === TYPE.metadata)) {
+    const path = `${dir}metadata.xml`;
+    zip.file(path, DYNAMIC_ARRAY_METADATA);
+    override(path, CONTENT.metadata);
+    addRel(TYPE.metadata, path);
   }
 
   const stylesPath = `${dir}styles.xml`;

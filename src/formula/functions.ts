@@ -4,7 +4,7 @@
 
 import { CellError, type Scalar } from "../model";
 import { dateToSerial, formatValue, parseInput, serialToDate } from "../numfmt";
-import { FUNCTIONS, RangeValue, cellsOf, compare, err, evaluate, isErr, scalar, toBool, toNumber, toText, type EvalContext, type Fn, type Value } from "./eval";
+import { ArrayValue, FUNCTIONS, RangeValue, cellsOf, compare, err, evaluate, isErr, scalar, toBool, toGrid, toNumber, toText, type EvalContext, type Fn, type Value } from "./eval";
 import { parse, type Node } from "./parse";
 
 // ---- helpers ------------------------------------------------------------------------------
@@ -23,7 +23,7 @@ function numbers(args: Node[], ctx: EvalContext): number[] | CellError {
   const out: number[] = [];
   for (const arg of args) {
     const v = ev(arg, ctx);
-    if (v instanceof RangeValue) {
+    if (v instanceof RangeValue || v instanceof ArrayValue) {
       for (const c of cellsOf(v, ctx)) {
         if (isErr(c)) return c;
         if (typeof c === "number") out.push(c);
@@ -43,7 +43,7 @@ function values(args: Node[], ctx: EvalContext): Scalar[] {
   const out: Scalar[] = [];
   for (const arg of args) {
     const v = ev(arg, ctx);
-    if (v instanceof RangeValue) out.push(...cellsOf(v, ctx));
+    if (v instanceof RangeValue || v instanceof ArrayValue) out.push(...cellsOf(v, ctx));
     else out.push(v);
   }
   return out;
@@ -224,17 +224,15 @@ def("QUARTILE QUARTILE.INC", (args, ctx) => {
   return fns.PERCENTILE([args[0], { t: "num", v: Math.floor(q) / 4 }], ctx);
 });
 def("SUMPRODUCT", (args, ctx) => {
-  const ranges = args.map((a) => range(a, ctx));
-  const bad = ranges.find(isErr);
-  if (bad) return bad as CellError;
-  const rs = ranges as RangeValue[];
-  if (rs.some((r) => r.rows !== rs[0].rows || r.cols !== rs[0].cols)) return err("#VALUE!");
+  // Arrays too, so conditions work as in Excel: SUMPRODUCT((A1:A9="Oslo")*B1:B9).
+  const grids = args.map((a) => grid(a, ctx));
+  if (!grids.length || grids.some((g) => g.length !== grids[0].length || g[0].length !== grids[0][0].length)) return err("#VALUE!");
   let total = 0;
-  for (let i = 0; i < rs[0].rows; i++)
-    for (let j = 0; j < rs[0].cols; j++) {
+  for (let i = 0; i < grids[0].length; i++)
+    for (let j = 0; j < grids[0][0].length; j++) {
       let p = 1;
-      for (const r of rs) {
-        const v = cellAt(r, i, j, ctx);
+      for (const g of grids) {
+        const v = g[i][j];
         if (isErr(v)) return v;
         p *= typeof v === "number" ? v : 0;
       }
@@ -874,6 +872,103 @@ def("NPV", (args, ctx) => {
   if (isErr(flows)) return flows;
   return flows.reduce((total, v, i) => total + v / (1 + rate) ** (i + 1), 0);
 });
+
+// ---- dynamic arrays: results that spill into the cells below and to the right -----------------
+
+/** An argument as rows of values, with comparisons like A1:A9>5 worked out for every cell. */
+const grid = (node: Node | undefined, ctx: EvalContext): Scalar[][] => toGrid(ev(node, { ...ctx, arrays: true }), ctx);
+const truthy = (v: Scalar) => {
+  const b = toBool(v);
+  return b === true;
+};
+
+def("FILTER", (args, ctx) => {
+  const data = grid(args[0], ctx);
+  const keep = grid(args[1], ctx);
+  const errIn = keep.flat().find(isErr);
+  if (errIn) return errIn;
+  let rows: Scalar[][];
+  if (keep.length === data.length && keep[0].length === 1) rows = data.filter((_, i) => truthy(keep[i][0]));
+  else if (keep.length === 1 && keep[0].length === data[0].length) rows = data.map((row) => row.filter((_, j) => truthy(keep[0][j]))).filter((row) => row.length);
+  else return err("#VALUE!");
+  if (!rows.length || !rows[0].length) return args.length > 2 ? ev(args[2], ctx) : err("#CALC!");
+  return new ArrayValue(rows);
+});
+
+/** Rows (or columns) sorted by one or more keys, each up (1) or down (-1); the original order kept where keys are equal. */
+function sortRows(rows: Scalar[][], keys: { values: Scalar[]; order: number }[]): Scalar[][] {
+  const index = rows.map((_, i) => i);
+  index.sort((a, b) => {
+    for (const k of keys) {
+      const c = compare(k.values[a], k.values[b]);
+      if (c) return c * k.order;
+    }
+    return a - b;
+  });
+  return index.map((i) => rows[i]);
+}
+
+const transpose = (g: Scalar[][]) => (g.length ? g[0].map((_, j) => g.map((row) => row[j])) : g);
+
+def("SORT", (args, ctx) => {
+  let data = grid(args[0], ctx);
+  const byCol = !missing(args[3]) && toBool(one(args[3], ctx)) === true;
+  if (byCol) data = transpose(data);
+  const at = num(args[1], ctx, 1);
+  const order = num(args[2], ctx, 1);
+  if (isErr(at)) return at;
+  if (isErr(order)) return order;
+  if (at < 1 || at > data[0].length || (order !== 1 && order !== -1)) return err("#VALUE!");
+  const sorted = sortRows(data, [{ values: data.map((row) => row[at - 1]), order }]);
+  return new ArrayValue(byCol ? transpose(sorted) : sorted);
+});
+
+def("SORTBY", (args, ctx) => {
+  const data = grid(args[0], ctx);
+  const keys: { values: Scalar[]; order: number }[] = [];
+  for (let i = 1; i < args.length; i += 2) {
+    const by = grid(args[i], ctx);
+    const order = num(args[i + 1], ctx, 1);
+    if (isErr(order)) return order;
+    const values = by.length === data.length && by[0].length === 1 ? by.map((row) => row[0]) : null;
+    if (!values || (order !== 1 && order !== -1)) return err("#VALUE!");
+    keys.push({ values, order });
+  }
+  return new ArrayValue(sortRows(data, keys));
+});
+
+def("UNIQUE", (args, ctx) => {
+  let data = grid(args[0], ctx);
+  const byCol = !missing(args[1]) && toBool(one(args[1], ctx)) === true;
+  const once = !missing(args[2]) && toBool(one(args[2], ctx)) === true;
+  if (byCol) data = transpose(data);
+  const id = (row: Scalar[]) => JSON.stringify(row.map((v) => (typeof v === "string" ? v.toLowerCase() : isErr(v) ? v.code : v)));
+  const counts = new Map<string, number>();
+  for (const row of data) counts.set(id(row), (counts.get(id(row)) ?? 0) + 1);
+  const seen = new Set<string>();
+  const rows = data.filter((row) => {
+    const k = id(row);
+    if (seen.has(k) || (once && counts.get(k)! > 1)) return false;
+    seen.add(k);
+    return true;
+  });
+  if (!rows.length) return err("#CALC!");
+  return new ArrayValue(byCol ? transpose(rows) : rows);
+});
+
+def("SEQUENCE", (args, ctx) => {
+  const rows = num(args[0], ctx);
+  const cols = num(args[1], ctx, 1);
+  const start = num(args[2], ctx, 1);
+  const step = num(args[3], ctx, 1);
+  for (const v of [rows, cols, start, step]) if (isErr(v)) return v;
+  const [r, c] = [Math.trunc(rows as number), Math.trunc(cols as number)];
+  if (r < 1 || c < 1) return err("#CALC!");
+  if (r * c > 1_000_000) return err("#NUM!");
+  return new ArrayValue(Array.from({ length: r }, (_, i) => Array.from({ length: c }, (_, j) => (start as number) + (i * c + j) * (step as number))));
+});
+
+def("TRANSPOSE", (args, ctx) => new ArrayValue(transpose(grid(args[0], ctx))));
 
 Object.assign(FUNCTIONS, fns);
 
