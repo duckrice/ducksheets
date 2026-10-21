@@ -1,0 +1,354 @@
+// Drives the built app over the DevTools protocol (WebView2 remote debugging):
+// typing values and formulas, pointing at cells in a formula, the fill
+// handle, formats, sorting, filtering, inserting rows, zoom, undo, and saving
+// an .xlsx that opens again (and, with EXCEL_CHECK=1, that Excel reads).
+//
+//   npm run tauri build -- --no-bundle && npm run smoke
+//
+// The test never touches the clipboard, so it can't disturb what you copied.
+import { execFileSync, spawn } from "node:child_process";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import JSZip from "jszip";
+
+const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+const exe = join(root, "src-tauri", "target", "release", "ducksheets.exe");
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const work = mkdtempSync(join(tmpdir(), "ducksheets-smoke-"));
+const profile = join(work, "profile");
+const shot = process.argv.find((a) => a.startsWith("--screenshot="))?.split("=")[1];
+
+let failures = 0;
+function check(name, ok, detail = "") {
+  if (!ok) failures++;
+  console.log(`${ok ? "ok  " : "FAIL"}  ${name}${detail && !ok ? `  (${detail})` : ""}`);
+}
+
+const requestClose = (pid) =>
+  execFileSync("powershell", [
+    "-NoProfile",
+    "-Command",
+    `Add-Type -Name W -Namespace U -MemberDefinition '[DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l);'; [void][U.W]::PostMessage((Get-Process -Id ${pid}).MainWindowHandle, 0x10, [IntPtr]::Zero, [IntPtr]::Zero)`,
+  ]);
+
+async function session(port, run) {
+  const child = spawn(exe, [], {
+    env: {
+      ...process.env,
+      
+      DUCKSHEETS_TEST_OFFSCREEN: "1",
+      DUCKSHEETS_MULTI_INSTANCE: "1",
+      WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port} --disable-features=CalculateNativeWinOcclusion --disable-backgrounding-occluded-windows --disable-renderer-backgrounding`,
+      WEBVIEW2_USER_DATA_FOLDER: profile,
+    },
+    stdio: "ignore",
+  });
+  let target;
+  for (let i = 0; i < 60 && !target; i++) {
+    await sleep(500);
+    try {
+      target = (await (await fetch(`http://127.0.0.1:${port}/json`)).json()).find((t) => t.type === "page");
+    } catch {
+      // Not listening yet.
+    }
+  }
+  if (!target) {
+    child.kill();
+    throw new Error("The app did not start, or remote debugging is unavailable");
+  }
+  const ws = new WebSocket(target.webSocketDebuggerUrl);
+  await new Promise((resolve) => (ws.onopen = resolve));
+  let nextId = 1;
+  const pending = new Map();
+  const errors = [];
+  const ipc = [];
+  ws.onmessage = (event) => {
+    const msg = JSON.parse(event.data);
+    if (msg.id && pending.has(msg.id)) {
+      pending.get(msg.id)(msg);
+      pending.delete(msg.id);
+    } else if (msg.method === "Network.requestWillBeSent" && msg.params.request.url.includes("ipc.localhost")) {
+      ipc.push(msg.params.request);
+    } else if (msg.method === "Runtime.exceptionThrown") {
+      const details = msg.params.exceptionDetails;
+      errors.push(details.exception?.description ?? details.text);
+    } else if (msg.method === "Runtime.consoleAPICalled" && msg.params.type === "error") {
+      errors.push(msg.params.args.map((arg) => arg.value ?? arg.description).join(" "));
+    }
+  };
+  ws.onclose = () => {
+    for (const resolve of pending.values()) resolve({ result: { result: {} } });
+  };
+  const send = (method, params = {}) =>
+    new Promise((resolve) => {
+      const id = nextId++;
+      pending.set(id, resolve);
+      ws.send(JSON.stringify({ id, method, params }));
+    });
+
+  const app = {
+    errors,
+    send,
+    ipc,
+    child,
+    async evaluate(expression) {
+      const { result } = await send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true });
+      if (result?.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description ?? "evaluate failed");
+      return result?.result?.value;
+    },
+    mouse: (type, x, y, extra = {}) => send("Input.dispatchMouseEvent", { type, x, y, button: "left", buttons: type === "mouseReleased" ? 0 : 1, clickCount: 1, ...extra }),
+    async click(x, y, modifiers = 0) {
+      await app.mouse("mouseMoved", x, y, { buttons: 0, modifiers });
+      await app.mouse("mousePressed", x, y, { modifiers });
+      await app.mouse("mouseReleased", x, y, { modifiers });
+    },
+    async drag(x1, y1, x2, y2) {
+      await app.mouse("mouseMoved", x1, y1, { buttons: 0 });
+      await app.mouse("mousePressed", x1, y1);
+      for (let i = 1; i <= 8; i++) await app.mouse("mouseMoved", x1 + ((x2 - x1) * i) / 8, y1 + ((y2 - y1) * i) / 8);
+      await app.mouse("mouseReleased", x2, y2);
+    },
+    async key(name, code, modifiers = 0) {
+      await send("Input.dispatchKeyEvent", { type: "keyDown", key: name, code: name, windowsVirtualKeyCode: code, modifiers });
+      await send("Input.dispatchKeyEvent", { type: "keyUp", key: name, code: name, windowsVirtualKeyCode: code, modifiers });
+    },
+    /** Types one character at a time, as a person does, so typing shortcuts run. */
+    async type(text) {
+      for (const ch of text) {
+        if (ch === "\n") await app.key("Enter", 13);
+        else await send("Input.insertText", { text: ch });
+      }
+    },
+    center: (selector, index = 0) =>
+      app.evaluate(`(() => {
+        const el = document.querySelectorAll(${JSON.stringify(selector)})[${index}];
+        if (!el) return null;
+        el.scrollIntoView({ block: "center" });
+        const r = el.getBoundingClientRect();
+        return [r.left + r.width / 2, r.top + r.height / 2, r.width, r.height];
+      })()`),
+    async clickOn(selector, index = 0, modifiers = 0) {
+      const at = await app.center(selector, index);
+      if (!at) throw new Error(`Nothing matches ${selector} [${index}]`);
+      await app.click(at[0], at[1], modifiers);
+    },
+    count: (selector) => app.evaluate(`document.querySelectorAll(${JSON.stringify(selector)}).length`),
+    async waitFor(expression, ms = 8000) {
+      for (let t = 0; t < ms; t += 150) {
+        if (await app.evaluate(expression)) return true;
+        await sleep(150);
+      }
+      return false;
+    },
+    /** A scroll-wheel turn; `modifiers`: 1 is Alt, 2 is Ctrl. */
+    wheel: (x, y, deltaY, modifiers = 0) => send("Input.dispatchMouseEvent", { type: "mouseWheel", x, y, deltaX: 0, deltaY, modifiers }),
+    /** Saves a picture of the window. */
+    async shot(file) {
+      const { result } = await send("Page.captureScreenshot", { format: "png" });
+      writeFileSync(file, Buffer.from(result.data, "base64"));
+    },
+    saved: () => app.waitFor(`document.querySelector(".status-text").textContent === "Saved"`),
+  };
+  await send("Runtime.enable");
+  await send("Network.enable");
+  try {
+    await app.waitFor(`!!window.__ducksheets`, 15000);
+    await sleep(400);
+    await run(app);
+  } finally {
+    ws.close();
+    if (child.exitCode === null) child.kill();
+    await sleep(500);
+  }
+}
+
+
+const CTRL = 2;
+const SHIFT = 8;
+
+/** Helpers for the sheet: where a cell is on screen, typing into cells, reading values. */
+function sheetHelpers(app) {
+  const at = async (r, c) =>
+    app.evaluate(`(() => {
+      const g = window.__ducksheets.grid;
+      g.reveal(${r}, ${c});
+      const b = g.cellBox(${r}, ${c});
+      const rect = g.el.getBoundingClientRect();
+      return [rect.left + b.x + b.w / 2, rect.top + b.y + b.h / 2];
+    })()`);
+  return {
+    at,
+    async select(r, c) {
+      await app.evaluate(`(() => { const d = window.__ducksheets.doc; d.sel = { r: ${r}, c: ${c}, ar: ${r}, ac: ${c} }; d.emit(); window.__ducksheets.grid.el.focus(); })()`);
+    },
+    /** Types into the selected cell as a person does: the first key starts editing, the rest go in the box. */
+    async type(text, end = "Enter") {
+      const [first, ...rest] = [...text];
+      await app.send("Input.dispatchKeyEvent", { type: "keyDown", key: first, text: first, unmodifiedText: first });
+      await app.send("Input.dispatchKeyEvent", { type: "keyUp", key: first });
+      for (const ch of rest) await app.send("Input.insertText", { text: ch });
+      if (end === "Enter") await app.key("Enter", 13);
+      else if (end === "Tab") await app.key("Tab", 9);
+    },
+    value: (r, c) => app.evaluate(`(() => { const v = window.__ducksheets.doc.value(${r}, ${c}); return v && typeof v === "object" ? v.code : v; })()`),
+    shown: (r, c) => app.evaluate(`window.__ducksheets.doc.shown(${r}, ${c})`),
+    formula: (r, c) => app.evaluate(`window.__ducksheets.doc.cell(${r}, ${c})?.f ?? null`),
+    sel: () => app.evaluate(`(() => { const s = window.__ducksheets.doc.sel; return [s.r, s.c, s.ar, s.ac]; })()`),
+  };
+}
+
+const saved = join(work, "budget.xlsx");
+
+await session(9801, async (app) => {
+  const s = sheetHelpers(app);
+  check("a new workbook opens, ready to type in", (await app.evaluate(`window.__ducksheets.doc.name`)) === "Book1.xlsx");
+
+  // Typing moves on as in Excel: Tab to the right, Enter down (back to the first column typed in).
+  await s.select(0, 0);
+  await s.type("Item", "Tab");
+  await s.type("Cost");
+  check("Tab moves right, Enter moves down", JSON.stringify(await s.sel()) === JSON.stringify([1, 1, 1, 1]), JSON.stringify(await s.sel()));
+  await s.select(1, 0);
+  await s.type("Rent", "Tab");
+  await s.type("9500");
+  await s.select(2, 0);
+  await s.type("Food", "Tab");
+  await s.type("1200.5");
+  check("numbers are read as numbers", (await s.value(1, 1)) === 9500 && (await s.value(2, 1)) === 1200.5, `${await s.value(1, 1)} ${await s.value(2, 1)}`);
+
+  // A formula, by typing it.
+  await s.select(3, 1);
+  await s.type("=sum(b2:b3)");
+  check("a typed formula works it out", (await s.value(3, 1)) === 10700.5);
+  check("and is written as Excel writes it", (await s.formula(3, 1)) === "SUM(B2:B3)");
+
+  // A formula by pointing: = then click a cell.
+  await s.select(4, 1);
+  await s.type("=", "none");
+  const [x, y] = await s.at(1, 1);
+  await app.click(x, y);
+  check("clicking a cell while typing a formula puts its address in", (await app.evaluate(`document.querySelector(".cell-editor").value`)) === "=B2");
+  check("and outlines it in colour", (await app.evaluate(`window.__ducksheets.grid.highlights.length`)) === 1);
+  await app.send("Input.insertText", { text: "*2" });
+  await app.key("Enter", 13);
+  check("pointing makes a working formula", (await s.value(4, 1)) === 19000);
+
+  // Percentages, dates and text are read as Excel reads them.
+  await s.select(6, 0);
+  await s.type("10%");
+  await s.select(7, 0);
+  await s.type("2026-10-20");
+  check("10% is a percentage", (await s.value(6, 0)) === 0.1 && (await s.shown(6, 0)) === "10%");
+  check("a date is a date", (await s.shown(7, 0)) === "2026-10-20" && typeof (await s.value(7, 0)) === "number");
+
+  // The fill handle: 1, 2 dragged down continues 3, 4, 5.
+  await s.select(9, 3);
+  await s.type("1");
+  await s.type("2");
+  await app.evaluate(`(() => { const d = window.__ducksheets.doc; d.sel = { r: 9, c: 3, ar: 10, ac: 3 }; d.emit(); })()`);
+  const handle = await app.evaluate(`(() => {
+    const g = window.__ducksheets.grid;
+    const b = g.cellBox(10, 3);
+    const rect = g.el.getBoundingClientRect();
+    return [rect.left + b.x + b.w - 1, rect.top + b.y + b.h - 1];
+  })()`);
+  const [, ty] = await s.at(13, 3);
+  await app.drag(handle[0], handle[1], handle[0], ty);
+  check("the fill handle continues a series", (await s.value(13, 3)) === 5, String(await s.value(13, 3)));
+
+  // Formats from the keyboard and the toolbar.
+  await s.select(0, 0);
+  await app.key("b", 66, CTRL);
+  check("Ctrl+B makes it bold", (await app.evaluate(`window.__ducksheets.doc.book.styles.fonts[window.__ducksheets.doc.book.styles.xfs[window.__ducksheets.doc.cell(0, 0).s].fontId].bold`)) === true);
+  await s.select(3, 1);
+  await app.evaluate(`(() => { const sel = document.querySelector(".format-select"); sel.value = "Currency"; sel.dispatchEvent(new Event("change")); })()`);
+  check("the toolbar sets a currency format", /kr|\$/.test(await s.shown(3, 1)), await s.shown(3, 1));
+  check("the status bar sums a selection", await (async () => {
+    await app.evaluate(`(() => { const d = window.__ducksheets.doc; d.sel = { r: 1, c: 1, ar: 2, ac: 1 }; d.emit(); })()`);
+    return /Sum/.test(await app.evaluate(`document.querySelector(".summary").textContent`));
+  })());
+
+  // Ctrl+arrow jumps to the edge of the data.
+  await s.select(1, 0);
+  await app.key("ArrowDown", 40, CTRL);
+  check("Ctrl+Down jumps to the end of the data", JSON.stringify((await s.sel()).slice(0, 2)) === JSON.stringify([2, 0]), JSON.stringify(await s.sel()));
+
+  // Sorting the list (selected, as the totals under it touch it), largest first.
+  await app.evaluate(`(() => { const d = window.__ducksheets.doc; d.sel = { r: 0, c: 1, ar: 2, ac: 0 }; d.emit(); })()`);
+  await app.clickOn(`.tb[title^="Sort Z to A"]`);
+  check("sorting keeps the heading and puts the largest first", (await s.value(0, 0)) === "Item" && (await s.value(1, 0)) === "Rent", `${await s.value(1, 0)}`);
+
+  // Inserting a row moves the formulas' references.
+  await s.select(2, 0);
+  await app.key(" ", 32, SHIFT);
+  await app.key("+", 187, CTRL);
+  check("a row inserted above keeps the sum right", (await s.formula(4, 1)) === "SUM(B2:B4)" && (await s.value(4, 1)) === 10700.5, `${await s.formula(4, 1)}`);
+  await app.key("z", 90, CTRL);
+  check("and Ctrl+Z takes it away again", (await s.formula(3, 1)) === "SUM(B2:B3)");
+
+  // Filtering from the heading's button.
+  await s.select(0, 0);
+  await app.key("L", 76, CTRL | SHIFT);
+  check("Ctrl+Shift+L turns on filtering", (await app.evaluate(`!!window.__ducksheets.doc.sheet.filter`)) === true);
+  const button = await app.evaluate(`(() => {
+    const g = window.__ducksheets.grid;
+    const b = g.cellBox(0, 0);
+    const rect = g.el.getBoundingClientRect();
+    return [rect.left + b.x + b.w - 9, rect.top + b.y + b.h - 9];
+  })()`);
+  await app.click(button[0], button[1]);
+  check("its button lists the values", await app.waitFor(`document.querySelectorAll(".filter-item").length >= 3`, 3000));
+  await app.evaluate(`(() => { const item = [...document.querySelectorAll(".filter-item")].find((l) => l.textContent === "Food"); item.querySelector("input").click(); [...document.querySelectorAll(".filter-menu .btn")].find((b) => b.textContent === "OK").click(); })()`);
+  check("unticking a value hides its rows", (await app.evaluate(`[...window.__ducksheets.doc.sheet.hiddenRows]`)).length === 1);
+  await app.key("L", 76, CTRL | SHIFT);
+
+  // Zoom with Ctrl+wheel.
+  const [gx, gy] = await s.at(5, 5);
+  await app.wheel(gx, gy, -120, CTRL);
+  check("Ctrl+wheel zooms", (await app.evaluate(`window.__ducksheets.grid.zoom`)) > 1);
+
+  // A chart of the list.
+  await app.evaluate(`(() => { const d = window.__ducksheets.doc; d.sel = { r: 0, c: 0, ar: 2, ac: 1 }; d.emit(); })()`);
+  await app.clickOn(`.tb[title^="Insert a chart"]`);
+  check("the chart button draws a chart of the selection", await app.waitFor(`document.querySelectorAll(".chart svg rect").length >= 3`, 3000));
+  const chartBox = await app.center(".chart");
+  await app.drag(chartBox[0], chartBox[1], chartBox[0] + 60, chartBox[1] + 40);
+  check("a chart can be dragged to another place", await app.evaluate(`(() => { const at = window.__ducksheets.doc.sheet.charts[0].at; return at.c !== 3 || at.dx > 40; })()`), JSON.stringify(await app.evaluate(`window.__ducksheets.doc.sheet.charts[0].at`)));
+
+  // Saving an .xlsx file, and opening it again.
+  await app.evaluate(`window.__ducksheets.save(${JSON.stringify(saved)})`);
+  check("it saves an Excel file", await app.waitFor(`document.querySelector(".status-text").textContent === "Saved budget.xlsx"`, 8000));
+  const zip = await JSZip.loadAsync(readFileSync(saved));
+  const sheetXml = await zip.file("xl/worksheets/sheet1.xml").async("string");
+  check("with the formulas and their values in it", /<f>SUM\(B2:B3\)<\/f><v>10700.5<\/v>/.test(sheetXml), sheetXml.slice(0, 300));
+  await app.evaluate(`window.__ducksheets.load(${JSON.stringify(saved)})`);
+  check("and opens it again as it was", (await app.waitFor(`window.__ducksheets.doc.name === "budget.xlsx"`)) && (await s.value(3, 1)) === 10700.5 && (await s.formula(4, 1)) === "B2*2");
+  check("with its chart", (await app.evaluate(`window.__ducksheets.doc.sheet.charts.length`)) === 1 && (await app.waitFor(`!!document.querySelector(".chart svg")`, 3000)));
+  if (shot) {
+    await app.evaluate(`(() => { const d = window.__ducksheets.doc; d.sel = { r: 3, c: 1, ar: 3, ac: 1 }; d.emit(); window.__ducksheets.grid.setZoom(1); })()`);
+    await app.shot(shot);
+  }
+  check("no errors in the app", app.errors.length === 0, app.errors.join("; "));
+
+  // Closing with changes asks whether to save.
+  await s.select(20, 0);
+  await s.type("changed");
+  requestClose(app.child.pid);
+  check("closing with changes asks whether to save", await app.waitFor(`!!document.querySelector(".dialog h2")?.textContent.startsWith("Save the changes")`, 5000));
+  await app.evaluate(`[...document.querySelectorAll(".dialog .btn")].find((b) => b.textContent === "Don't save").click()`);
+  for (let i = 0; i < 40 && app.child.exitCode === null; i++) await sleep(250);
+  check("and closes when told not to", app.child.exitCode !== null);
+});
+
+// Excel itself reads the saved file the same way, where it's installed.
+if (process.env.EXCEL_CHECK) {
+  const script = `$xl = New-Object -ComObject Excel.Application; $xl.Visible = $false; $xl.DisplayAlerts = $false
+try { $wb = $xl.Workbooks.Open('${saved}'); $s = $wb.Worksheets.Item(1); @{ total = $s.Range('B4').Value2; formula = $s.Range('B5').Formula } | ConvertTo-Json -Compress; $wb.Close($false) } finally { $xl.Quit() }`;
+  const report = JSON.parse(execFileSync("powershell", ["-NoProfile", "-Command", script], { encoding: "utf8" }));
+  check("Excel opens the saved file with the same results", report.total === 10700.5 && report.formula === "=B2*2", JSON.stringify(report));
+}
+
+console.log(failures ? `\n${failures} check(s) failed` : "\nAll checks passed");
+process.exit(failures ? 1 : 0);

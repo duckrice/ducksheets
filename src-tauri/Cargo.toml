@@ -1,0 +1,32 @@
+[package]
+name = "ducksheets"
+version = "0.1.0"
+description = "A spreadsheet that opens and saves Excel workbooks"
+authors = ["Duckrice"]
+edition = "2021"
+
+[lib]
+# The `_lib` suffix keeps the library name from clashing with the binary on Windows,
+# see https://github.com/rust-lang/cargo/issues/8519
+name = "ducksheets_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-process = "2"
+tauri-plugin-single-instance = "2"
+tauri-plugin-updater = "2"
+percent-encoding = "2"
+# Needed by tauri::generate_context! once plugins have settings in tauri.conf.json.
+serde_json = "1"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true
