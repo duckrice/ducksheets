@@ -138,6 +138,18 @@ await test("9 type a formula, click a cell (points), Enter, then click another a
   return { ok: (await value(27, 2)) === "p", formula: await ev(`window.__ducksheets.doc.cell(26, 1)?.f`), ...(await state()) };
 });
 
+await test("10 type, click Bold before Enter: the text stays, in bold", async () => {
+  await click(20, 1);
+  for (const ch of "bold") await char(ch);
+  const [x, y] = await ev(`(() => { const r = document.querySelector('[aria-label="Bold"]').getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`);
+  await send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", buttons: 1, clickCount: 1 });
+  await send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", buttons: 0, clickCount: 1 });
+  await sleep(150);
+  await key("Enter", 13);
+  const bold = await ev("window.__ducksheets.doc.cell(20, 1)?.s !== undefined");
+  return { ok: (await value(20, 1)) === "bold" && bold, ...(await state()) };
+});
+
 for (const [name, r] of results) console.log(r?.ok ? "ok  " : "FAIL", name, JSON.stringify(r));
 child.kill();
 const failed = results.filter(([, r]) => !r?.ok).length;

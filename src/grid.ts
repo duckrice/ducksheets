@@ -109,7 +109,7 @@ export class Grid {
 
   constructor(
     private doc: Doc,
-    private hooks: GridHooks,
+    readonly hooks: GridHooks,
   ) {
     this.canvas = document.createElement("canvas");
     this.canvas.className = "grid-canvas";

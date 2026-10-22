@@ -101,6 +101,8 @@ export function createToolbar(doc: Doc, grid: Grid, actions: ToolbarActions) {
   const range = () => grid.expanded(selRange(doc.sel));
   const active = () => lookOf(doc.book.styles, doc.cell(doc.sel.r, doc.sel.c)?.s);
   const apply = (change: StyleChange | ((s: number | undefined, r: number, c: number) => StyleChange)) => {
+    // What's being typed goes into the cell first, or formatting it would throw it away.
+    grid.hooks.finishEditing();
     doc.format(range(), change);
     grid.el.focus();
   };
