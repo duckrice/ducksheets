@@ -42,6 +42,8 @@ export function parseChart(text: string, sheetName: string): Omit<Chart, "id" | 
   if (type.localName === "barChart") kind = kid(type, "barDir")?.getAttribute("val") === "bar" ? "bar" : "column";
   else if (type.localName === "lineChart") kind = "line";
   else if (type.localName === "pieChart") kind = "pie";
+  else if (type.localName === "doughnutChart") kind = "doughnut";
+  else if (type.localName === "areaChart" && ["standard", null].includes(kid(type, "grouping")?.getAttribute("val") ?? null)) kind = "area";
   else return null;
   if (type.localName === "barChart" && !["clustered", null].includes(kid(type, "grouping")?.getAttribute("val") ?? null)) return null;
   const series = kids(type, "ser");
@@ -161,8 +163,8 @@ export function chartXml(chart: Chart, sheetName: string, content: ChartContent)
       ? `<c:tx><c:strRef><c:f>${esc(abs(sheetName, { r1: data.r1, c1: c, r2: data.r1, c2: c }))}</c:f><c:strCache><c:ptCount val="1"/><c:pt idx="0"><c:v>${esc(s.name)}</c:v></c:pt></c:strCache></c:strRef></c:tx>`
       : `<c:tx><c:v>${esc(s.name)}</c:v></c:tx>`;
     const color = COLORS[i % COLORS.length];
-    const fill = chart.kind === "line" ? `<c:spPr><a:ln w="28575" cap="rnd"><a:solidFill><a:srgbClr val="${color}"/></a:solidFill><a:round/></a:ln></c:spPr><c:marker><c:symbol val="circle"/><c:size val="5"/><c:spPr><a:solidFill><a:srgbClr val="${color}"/></a:solidFill></c:spPr></c:marker>` : chart.kind === "pie" ? "" : `<c:spPr><a:solidFill><a:srgbClr val="${color}"/></a:solidFill></c:spPr><c:invertIfNegative val="0"/>`;
-    const slices = chart.kind === "pie" ? content.categories.map((_, k) => `<c:dPt><c:idx val="${k}"/><c:bubble3D val="0"/><c:spPr><a:solidFill><a:srgbClr val="${COLORS[k % COLORS.length]}"/></a:solidFill><a:ln w="19050"><a:solidFill><a:srgbClr val="FFFFFF"/></a:solidFill></a:ln></c:spPr></c:dPt>`).join("") : "";
+    const fill = chart.kind === "line" ? `<c:spPr><a:ln w="28575" cap="rnd"><a:solidFill><a:srgbClr val="${color}"/></a:solidFill><a:round/></a:ln></c:spPr><c:marker><c:symbol val="circle"/><c:size val="5"/><c:spPr><a:solidFill><a:srgbClr val="${color}"/></a:solidFill></c:spPr></c:marker>` : chart.kind === "pie" || chart.kind === "doughnut" ? "" : `<c:spPr><a:solidFill><a:srgbClr val="${color}"/></a:solidFill></c:spPr>${chart.kind === "area" ? "" : '<c:invertIfNegative val="0"/>'}`;
+    const slices = chart.kind === "pie" || chart.kind === "doughnut" ? content.categories.map((_, k) => `<c:dPt><c:idx val="${k}"/><c:bubble3D val="0"/><c:spPr><a:solidFill><a:srgbClr val="${COLORS[k % COLORS.length]}"/></a:solidFill><a:ln w="19050"><a:solidFill><a:srgbClr val="FFFFFF"/></a:solidFill></a:ln></c:spPr></c:dPt>`).join("") : "";
     const cat = content.labelled
       ? `<c:cat><c:strRef><c:f>${esc(abs(sheetName, { r1: top, c1: data.c1, r2: data.r2, c2: data.c1 }))}</c:f><c:strCache><c:ptCount val="${content.categories.length}"/>${points(content.categories)}</c:strCache></c:strRef></c:cat>`
       : "";
@@ -175,10 +177,12 @@ export function chartXml(chart: Chart, sheetName: string, content: ChartContent)
   const ids = '<c:axId val="500000001"/><c:axId val="500000002"/>';
   let plot: string;
   if (chart.kind === "pie") plot = `<c:pieChart><c:varyColors val="1"/>${series[0] ?? ""}<c:firstSliceAng val="0"/></c:pieChart>`;
+  else if (chart.kind === "doughnut") plot = `<c:doughnutChart><c:varyColors val="1"/>${series[0] ?? ""}<c:firstSliceAng val="0"/><c:holeSize val="50"/></c:doughnutChart>`;
+  else if (chart.kind === "area") plot = `<c:areaChart><c:grouping val="standard"/><c:varyColors val="0"/>${series.join("")}${ids}</c:areaChart>${axes("b", "l")}`;
   else if (chart.kind === "line") plot = `<c:lineChart><c:grouping val="standard"/><c:varyColors val="0"/>${series.join("")}<c:marker val="1"/>${ids}</c:lineChart>${axes("b", "l")}`;
   else plot = `<c:barChart><c:barDir val="${chart.kind === "bar" ? "bar" : "col"}"/><c:grouping val="clustered"/><c:varyColors val="0"/>${series.join("")}<c:gapWidth val="150"/>${ids}</c:barChart>${axes(chart.kind === "bar" ? "l" : "b", chart.kind === "bar" ? "b" : "l")}`;
   const title = chart.title ? `<c:title><c:tx><c:rich><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr sz="1400" b="0"/></a:pPr><a:r><a:rPr lang="en-US" sz="1400" b="0"/><a:t>${esc(chart.title)}</a:t></a:r></a:p></c:rich></c:tx><c:overlay val="0"/></c:title><c:autoTitleDeleted val="0"/>` : '<c:autoTitleDeleted val="1"/>';
-  const legend = chart.kind === "pie" || content.series.length > 1 ? '<c:legend><c:legendPos val="b"/><c:overlay val="0"/></c:legend>' : "";
+  const legend = chart.kind === "pie" || chart.kind === "doughnut" || content.series.length > 1 ? '<c:legend><c:legendPos val="b"/><c:overlay val="0"/></c:legend>' : "";
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<c:chartSpace xmlns:c="${C}" xmlns:a="${A}" xmlns:r="${R}"><c:roundedCorners val="0"/><c:chart>${title}<c:plotArea><c:layout/>${plot}</c:plotArea>${legend}<c:plotVisOnly val="1"/><c:dispBlanksAs val="gap"/></c:chart><c:spPr><a:solidFill><a:srgbClr val="FFFFFF"/></a:solidFill><a:ln w="9525"><a:solidFill><a:srgbClr val="D9D9D9"/></a:solidFill></a:ln></c:spPr></c:chartSpace>`;
 }
 

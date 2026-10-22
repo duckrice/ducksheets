@@ -36,7 +36,7 @@ A free spreadsheet for Windows that opens and saves Excel workbooks (.xlsx, .xls
 - **Links.** Ctrl+K links a cell to a web or e-mail address or a place in the workbook; a click follows it, and HYPERLINK works too.
 - **Notes.** Notes on cells, as in Excel (Shift+F2, or right-click): a red corner shows where they are, and the mouse over the cell shows the note.
 - **Printing.** Ctrl+P prints the sheet (or the selection), with its formats; choose "Microsoft Print to PDF" to save a PDF.
-- **Charts.** Column, bar, line and pie charts, saved as real Excel charts linked to the cells.
+- **Charts.** Column, bar, line, area, pie and doughnut charts, saved as real Excel charts linked to the cells.
 - **Copy and paste** with Excel and other programs.
 
 ## Keys
