@@ -968,6 +968,13 @@ def("SEQUENCE", (args, ctx) => {
   return new ArrayValue(Array.from({ length: r }, (_, i) => Array.from({ length: c }, (_, j) => (start as number) + (i * c + j) * (step as number))));
 });
 
+/** HYPERLINK shows its name (or the address); clicking the cell opens the address. */
+def("HYPERLINK", (args, ctx) => {
+  const link = one(args[0], ctx);
+  if (isErr(link)) return link;
+  return missing(args[1]) ? toText(link) : one(args[1], ctx);
+});
+
 def("TRANSPOSE", (args, ctx) => new ArrayValue(transpose(grid(args[0], ctx))));
 
 // ---- maths and trigonometry -------------------------------------------------------------------

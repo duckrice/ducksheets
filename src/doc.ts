@@ -45,6 +45,7 @@ function cloneSheet(s: Sheet): Sheet {
     conditional: [...s.conditional],
     validations: [...s.validations],
     notes: new Map(s.notes),
+    links: new Map(s.links),
   };
 }
 
@@ -305,6 +306,16 @@ export class Doc {
     });
   }
 
+  /** Puts a link on a cell (and, if given, the text it shows), or (empty) takes it off. */
+  setLink(r: number, c: number, link: string, text?: string) {
+    this.change(() => {
+      if (text !== undefined && text !== "") this.put(this.sheet, r, c, text);
+      else if (link && !this.sheet.cells.get(key(r, c))?.v && !this.sheet.cells.get(key(r, c))?.f) this.put(this.sheet, r, c, link.replace(/^#/, "").replace(/^mailto:/, ""));
+      if (link) this.sheet.links.set(key(r, c), link);
+      else this.sheet.links.delete(key(r, c));
+    });
+  }
+
   /** Puts a note on a cell, or (empty text) takes it off. */
   setNote(r: number, c: number, text: string, author: string) {
     this.change(() => {
@@ -455,6 +466,14 @@ export class Doc {
         if (i !== null) notes.set(axis === "r" ? key(i, c) : key(r, i), note);
       }
       sheet.notes = notes;
+      const links = new Map<number, string>();
+      for (const [k, link] of sheet.links) {
+        const r = rowOf(k);
+        const c = colOf(k);
+        const i = move(axis === "r" ? r : c);
+        if (i !== null) links.set(axis === "r" ? key(i, c) : key(r, i), link);
+      }
+      sheet.links = links;
       const sizes = axis === "r" ? sheet.rowHeights : sheet.colWidths;
       const moved = new Map<number, number>();
       for (const [i, size] of sizes) {

@@ -16,6 +16,7 @@ import { conditionalXml } from "../conditional";
 import { ARRAY_FUNCTIONS } from "../calc";
 import { validationsXml } from "../validation";
 import { writeNotes } from "./notes";
+import { writeLinks } from "./links";
 
 const MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
 const REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
@@ -184,7 +185,7 @@ function filterXml(sheet: Sheet): string | null {
   return `<autoFilter ref="${rangeAddress(sheet.filter.range)}">${columns.join("")}</autoFilter>`;
 }
 
-function sheetXml(sheet: Sheet, index: number, calc: Calculator, strings: SharedStrings, selected: boolean, drawing: string | null, legacy: string | null | undefined): string {
+function sheetXml(sheet: Sheet, index: number, calc: Calculator, strings: SharedStrings, selected: boolean, drawing: string | null, legacy: string | null | undefined, links: string | null): string {
   const used = usedRange(sheet);
   const doc = xml(sheet.origin?.xml ?? `<worksheet xmlns="${MAIN}" xmlns:r="${REL}"><sheetData/><pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/></worksheet>`);
   setPart(doc, "dimension", `<dimension ref="${used ? rangeAddress(used) : "A1"}"/>`);
@@ -206,6 +207,7 @@ function sheetXml(sheet: Sheet, index: number, calc: Calculator, strings: Shared
   if (drawing && !Array.from(doc.documentElement.children).some((el) => el.localName === "drawing")) setPart(doc, "drawing", `<drawing r:id="${drawing}"/>`);
   setPart(doc, "conditionalFormatting", conditionalXml(sheet.conditional));
   setPart(doc, "dataValidations", validationsXml(sheet.validations));
+  setPart(doc, "hyperlinks", links);
   if (legacy !== undefined) setPart(doc, "legacyDrawing", legacy ? `<legacyDrawing r:id="${legacy}"/>` : null);
   setPart(doc, "mergeCells", sheet.merges.length ? `<mergeCells count="${sheet.merges.length}">${sheet.merges.map((m) => `<mergeCell ref="${rangeAddress(m)}"/>`).join("")}</mergeCells>` : null);
   return serialize(doc);
@@ -362,7 +364,8 @@ export async function writeXlsx(book: Workbook, calc: Calculator, active = 0): P
     keepPaths.add(path);
     const drawing = await writeDrawing(zip, book, calc, i, path, override);
     const legacy = await writeNotes(zip, sheet, path, override);
-    zip.file(path, sheetXml(sheet, i, calc, strings, i === active, drawing, legacy));
+    const links = await writeLinks(zip, sheet, path);
+    zip.file(path, sheetXml(sheet, i, calc, strings, i === active, drawing, legacy, links));
     override(path, CONTENT.sheet);
     const id = addRel(TYPE.sheet, path);
     sheetEls.push(`<sheet name="${esc(sheet.name)}" sheetId="${i + 1}" r:id="${id}"/>`);

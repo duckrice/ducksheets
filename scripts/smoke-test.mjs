@@ -402,6 +402,17 @@ await session(9801, async (app) => {
   await app.mouse("mouseMoved", nx, ny, { buttons: 0 });
   check("the mouse over the cell shows the note", await app.waitFor(`(() => { const t = document.querySelector(".note-tip"); return !t.hidden && t.textContent.includes("Remember the deposit"); })()`, 2000));
 
+  // Links: Ctrl+K puts one on a cell; a click on the cell follows it.
+  await s.select(62, 1);
+  await app.key("k", 75, 2);
+  check("Ctrl+K asks for a link", await app.waitFor(`!!document.querySelector('[aria-label="Address"]')`, 3000));
+  await app.evaluate(`(() => { document.querySelector('[aria-label="Address"]').value = "A100"; document.querySelector('[aria-label="Text to show"]').value = "Go down"; [...document.querySelectorAll('[aria-label="Link"] .btn')].find((b) => b.textContent === "OK").click(); })()`);
+  check("and puts it on the cell, with its text", (await s.value(62, 1)) === "Go down" && (await app.evaluate(`window.__ducksheets.doc.sheet.links.get(62 * 16384 + 1)`)) === "#A100");
+  await s.select(70, 3);
+  const [lx, ly] = await s.at(62, 1);
+  await app.click(lx, ly);
+  check("clicking a link goes where it points", await app.waitFor(`window.__ducksheets.doc.sel.r === 99 && window.__ducksheets.doc.sel.c === 0`, 3000), JSON.stringify(await s.sel()));
+
   // Ctrl+` shows formulas.
   await app.send("Input.dispatchKeyEvent", { type: "keyDown", key: "`", code: "Backquote", windowsVirtualKeyCode: 192, modifiers: 2 });
   await app.send("Input.dispatchKeyEvent", { type: "keyUp", key: "`", code: "Backquote", windowsVirtualKeyCode: 192, modifiers: 2 });

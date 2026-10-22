@@ -12,6 +12,7 @@ import { readConditional } from "../conditional";
 import { ARRAY_FUNCTIONS } from "../calc";
 import { readValidations } from "../validation";
 import { readNotes } from "./notes";
+import { readLinks } from "./links";
 
 const MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
 
@@ -93,6 +94,7 @@ export async function readXlsx(bytes: Uint8Array): Promise<Workbook> {
     sheet.origin = { path: rel.path, xml: text };
     await readCharts(zip, sheet);
     sheet.notes = await readNotes(zip, rel.path);
+    sheet.links = await readLinks(zip, rel.path, new DOMParser().parseFromString(text, "application/xml").documentElement);
     book.sheets.push(sheet);
   }
   if (!book.sheets.length) throw new NotAWorkbook("This workbook has no sheets DuckSheets can show.");

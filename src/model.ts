@@ -80,6 +80,8 @@ export interface Sheet {
   validations: Validation[];
   /** Notes on cells (Excel's comments), by cell. */
   notes: Map<number, Note>;
+  /** Links on cells: a web or e-mail address, or "#Sheet2!A1" for a place in the workbook. */
+  links: Map<number, string>;
   defaultColWidth: number;
   defaultRowHeight: number;
   /** For a sheet read from an .xlsx file: its part in the file and its XML, so what isn't edited here is kept. */
@@ -117,6 +119,7 @@ export function newSheet(name: string): Sheet {
     conditional: [],
     validations: [],
     notes: new Map(),
+    links: new Map(),
     defaultColWidth: 64,
     defaultRowHeight: 20,
   };

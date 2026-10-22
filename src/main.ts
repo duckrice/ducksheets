@@ -8,7 +8,7 @@ import { Editor, type Move } from "./editor";
 import { Grid } from "./grid";
 import { h, isTyping } from "./dom";
 import { icon } from "./icons";
-import { MAX_COLS, MAX_ROWS, inRange, key, mergeAt, rangeAddress } from "./model";
+import { MAX_COLS, MAX_ROWS, inRange, key, mergeAt, parseRange, rangeAddress } from "./model";
 import { dateToSerial, formatValue, locale, parseInput } from "./numfmt";
 import { createToolbar, numberFormats, sumRange } from "./toolbar";
 import { readCsv, writeCsv } from "./csv";
@@ -16,7 +16,7 @@ import { readXlsx } from "./xlsx/read";
 import { writeXlsx } from "./xlsx/write";
 import { lookOf } from "./xlsx/styles";
 import { ask, askName, askSave, menu, modal, popover, toast, type MenuItem } from "./ui";
-import { baseName, onCloseRequested, onFilesOpened, pickFile, pickSavePath, readPath, setTitle, startupFiles, writePath, type OpenedFile } from "./platform";
+import { baseName, onCloseRequested, onFilesOpened, openUrl, pickFile, pickSavePath, readPath, setTitle, startupFiles, writePath, type OpenedFile } from "./platform";
 import { offerUpdate } from "./updates";
 import { insertChart, renderCharts } from "./charts";
 import { formatCells } from "./formatdialog";
@@ -46,6 +46,7 @@ function mount(next: Doc) {
     selectionChanged: () => refreshSelection(),
     pointing: () => editor.pointing(),
     point: (range, sheet) => editor.point(range, sheet),
+    follow: (r, c) => followLink(r, c),
     finishEditing: () => {
       if (editor.active) editor.finish("none");
     },
@@ -467,6 +468,9 @@ function keydown(e: KeyboardEvent) {
       case "h":
         findReplace(true);
         return done();
+      case "k":
+        editLink();
+        return done();
       case "p":
         if (!printSheet(doc)) toast("There's nothing on this sheet to print.");
         return done();
@@ -584,6 +588,62 @@ function stopPainter() {
   toolbar.update();
 }
 
+/** Follows a cell's link: a web or e-mail address in the browser, a place in the workbook by going there. */
+function followLink(r: number, c: number) {
+  const link = doc.sheet.links.get(key(r, c)) ?? doc.calc.hyperlink(doc.active, r, c);
+  if (!link) return;
+  const place = link.startsWith("#") ? link.slice(1) : null;
+  if (place) {
+    const bang = place.lastIndexOf("!");
+    const sheetName = bang >= 0 ? place.slice(0, bang).replace(/^'|'$/g, "") : doc.sheet.name;
+    const target = parseRange((bang >= 0 ? place.slice(bang + 1) : place).replace(/\$/g, ""));
+    const index = doc.book.sheets.findIndex((s) => s.name.toLowerCase() === sheetName.toLowerCase());
+    if (index < 0 || !target) return toast("That place isn't in this workbook.");
+    if (index !== doc.active) switchSheet(index);
+    doc.sel = { r: target.r1, c: target.c1, ar: target.r2, ac: target.c2 };
+    grid.reveal(target.r1, target.c1);
+    refreshSelection();
+    return;
+  }
+  const url = /^[\w.+-]+@[\w-]+\.[\w.-]+$/.test(link) ? `mailto:${link}` : /^www\./i.test(link) ? `https://${link}` : link;
+  void openUrl(url).catch(() => toast("Only web and e-mail addresses can be opened."));
+}
+
+/** Ctrl+K: a link on the selected cell (a web or e-mail address, or a place in the workbook). */
+function editLink() {
+  const { r, c } = doc.sel;
+  const current = doc.sheet.links.get(key(r, c)) ?? "";
+  const address = h("input", { type: "text", class: "tb-input wide", placeholder: "https://…, name@example.com, or Sheet2!A1", value: current.startsWith("#") ? current.slice(1) : current.replace(/^mailto:/, ""), "aria-label": "Address" }) as HTMLInputElement;
+  const text = h("input", { type: "text", class: "tb-input wide", value: doc.cell(r, c)?.f === undefined ? String(doc.value(r, c) ?? "") : "", "aria-label": "Text to show" }) as HTMLInputElement;
+  const ok = h("button", { type: "button", class: "btn primary" }, "OK");
+  const cancel = h("button", { type: "button", class: "btn" }, "Cancel");
+  const remove = h("button", { type: "button", class: "btn subtle", hidden: !current }, "Remove link");
+  const close = modal(
+    h("div", { class: "dialog", role: "dialog", "aria-label": "Link" }, h("h2", {}, "Link"), h("p", {}, "Address"), address, h("p", {}, "Text to show"), text, h("div", { class: "dialog-buttons" }, remove, h("span", { class: "spacer" }), cancel, ok)),
+    (event) => {
+      if (event.key === "Escape") close();
+      if (event.key === "Enter") finish();
+    },
+  );
+  const finish = () => {
+    const a = address.value.trim();
+    close();
+    if (!a) return doc.setLink(r, c, "");
+    // A place in the workbook: a sheet's cell (Sheet2!A1) or a cell on this sheet (B7).
+    const place = /^('[^']+'|[^!\s]+)![$A-Za-z]+[$\d]+(:[$A-Za-z]+[$\d]+)?$/.test(a) || /^\$?[A-Za-z]{1,3}\$?\d+$/.test(a);
+    const link = place ? `#${a}` : /^[\w.+-]+@[\w-]+\.[\w.-]+$/.test(a) ? `mailto:${a}` : /^(https?|mailto):/i.test(a) ? a : `https://${a}`;
+    doc.setLink(r, c, link, text.value.trim() || undefined);
+    grid.el.focus({ preventScroll: true });
+  };
+  ok.addEventListener("click", finish);
+  cancel.addEventListener("click", close);
+  remove.addEventListener("click", () => {
+    close();
+    doc.setLink(r, c, "");
+  });
+  address.focus();
+}
+
 /** A note on the selected cell: written or changed in a box; emptied, it goes. */
 function editNote() {
   const { r, c } = doc.sel;
@@ -679,6 +739,9 @@ function contextMenu(x: number, y: number, on: "cell" | "row" | "col") {
   if (on === "cell") {
     const has = doc.sheet.notes.has(key(doc.sel.r, doc.sel.c));
     items.push({ label: has ? "Edit note… (Shift+F2)" : "New note… (Shift+F2)", action: () => editNote() });
+    const linked = doc.sheet.links.has(key(doc.sel.r, doc.sel.c));
+    items.push({ label: linked ? "Edit link… (Ctrl+K)" : "Link… (Ctrl+K)", action: () => editLink() });
+    if (linked) items.push({ label: "Remove link", action: () => doc.setLink(doc.sel.r, doc.sel.c, "") });
     if (has) items.push({ label: "Delete note", action: () => doc.setNote(doc.sel.r, doc.sel.c, "", "") });
   }
   items.push({ label: "Format cells… (Ctrl+1)", action: () => formatCells(doc, grid) });

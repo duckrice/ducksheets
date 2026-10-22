@@ -71,6 +71,8 @@ export interface GridHooks {
   point(range: Range, sheet: number): void;
   /** Puts in what's being typed, if anything (a click elsewhere does that, as in Excel). */
   finishEditing(): void;
+  /** A click (not a hold) on a cell: follows its link, if it has one. */
+  follow(r: number, c: number): void;
   contextMenu(x: number, y: number, on: "cell" | "row" | "col"): void;
   filterMenu(col: number, x: number, y: number): void;
 }
@@ -508,7 +510,11 @@ export class Grid {
     if (!shown.text) return;
     const ctx = this.ctx;
     const effect = this.effects.get(key(r, c));
-    const font = effect ? { ...look.font, ...(effect.bold ? { bold: true } : {}), ...(effect.italic ? { italic: true } : {}) } : look.font;
+    // Links show blue and underlined, as Excel's Hyperlink style.
+    const linked = sheet.links.has(key(r, c)) || (!!cell?.f && /^\s*HYPERLINK\s*\(/i.test(cell.f));
+    const styled = effect ? { ...look.font, ...(effect.bold ? { bold: true } : {}), ...(effect.italic ? { italic: true } : {}) } : look.font;
+    const font = linked ? { ...styled, underline: true, color: styled.color && styled.color !== "#000000" ? styled.color : "#0563C1" } : styled;
+    if (linked && !effect?.color) shown.color = font.color;
     if (effect?.color) shown.color = effect.color;
     const size = (font.size * 4) / 3;
     const css = `${font.italic ? "italic " : ""}${font.bold ? "bold " : ""}${size}px "${font.name}", "Segoe UI", sans-serif`;
@@ -807,8 +813,12 @@ export class Grid {
     this.render();
   }
 
+  /** When the mouse button went down, to tell a click from a hold. */
+  private downAt = 0;
+
   private down(e: PointerEvent) {
     if (e.button !== 0) return;
+    this.downAt = Date.now();
     const { x, y } = this.local(e);
     const hit = this.hit(x, y);
     const sel = this.doc.sel;
@@ -919,6 +929,11 @@ export class Grid {
     this.drag = null;
     if (this.scroller.hasPointerCapture(e.pointerId)) this.scroller.releasePointerCapture(e.pointerId);
     if (!drag) return;
+    // As in Excel, a click on a link follows it; holding the button a moment just selects the cell.
+    if (drag.kind === "select" && Date.now() - this.downAt < 500 && !e.shiftKey) {
+      const s = this.doc.sel;
+      if (s.r === s.ar && s.c === s.ac && s.r === drag.r && s.c === drag.c) this.hooks.follow(s.r, s.c);
+    }
     const sel = selRange(this.doc.sel);
     if (drag.kind === "fill") {
       const s = drag.source;

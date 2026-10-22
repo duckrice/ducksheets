@@ -122,6 +122,17 @@ export class Calculator {
     return this.spillRanges.get(sheet)?.get(key(r, c));
   }
 
+  /** Where a cell's HYPERLINK formula points, if it has one. */
+  hyperlink(sheet: number, r: number, c: number): string | null {
+    const f = this.book.sheets[sheet]?.cells.get(key(r, c))?.f;
+    if (!f || !/^\s*HYPERLINK\s*\(/i.test(f)) return null;
+    const tree = this.tree(f);
+    if (tree instanceof FormulaError || tree.t !== "fn" || !tree.args[0]) return null;
+    const ctx = this.context(sheet, r, c);
+    const v = scalar(evaluate(tree.args[0], ctx), ctx);
+    return typeof v === "string" && v ? v : null;
+  }
+
   /** What a formula (without its "=") gives at a cell, as if it were there; for rules like conditional formatting. */
   formulaValue(formula: string, sheet: number, r: number, c: number): Scalar {
     const tree = this.tree(formula);
