@@ -3,9 +3,9 @@
 // never changed in place, so the copies are cheap), and undo puts them back.
 
 import { Calculator } from "./calc";
-import { afterInsertDelete, mapRefs, parse, print, renamedSheet, shifted, type Node } from "./formula/parse";
+import { afterInsertDelete, mapRefs, quoteSheet, parse, print, renamedSheet, shifted, type Node } from "./formula/parse";
 import { compare } from "./formula/eval";
-import { MAX_COLS, MAX_ROWS, colOf, inRange, key, newSheet, rowOf, type Cell, type Range, type Scalar, type Sheet, type Workbook } from "./model";
+import { MAX_COLS, MAX_ROWS, colName, colOf, inRange, key, newSheet, rowOf, type Cell, type Range, type Scalar, type Sheet, type Workbook } from "./model";
 import { editText, formatValue, isDateFormat, locale, parseInput } from "./numfmt";
 import { defaultStyles, lookOf, withStyle, type StyleChange } from "./xlsx/styles";
 import { dxfXml, withoutRules, type CfRule, type CfStyle } from "./conditional";
@@ -65,6 +65,9 @@ export interface Clip {
 export function newWorkbook(): Workbook {
   return { sheets: [newSheet("Sheet1")], styles: defaultStyles(), date1904: false, names: new Map() };
 }
+
+/** What a summary works out for each group. */
+export type SummaryFn = "sum" | "count" | "average" | "max" | "min";
 
 export class Doc {
   calc: Calculator;
@@ -529,6 +532,52 @@ export class Doc {
       this.active++;
       this.sel = { r: 0, c: 0, ar: 0, ac: 0 };
     });
+  }
+
+  /**
+   * A summary of the data in `range` (headers in its first row) on a new sheet, as a simple
+   * PivotTable: each value of column `by` once, A to Z, with the sum (or count, average, …) of
+   * column `of` for it, and a total. Formulas, so it follows changes to the data.
+   */
+  summarize(range: Range, by: number, of: number, fn: SummaryFn) {
+    const source = this.sheet;
+    const top = range.r1 + 1;
+    const column = (c: number) => `${quoteSheet(source.name)}!${colName(c)}${top + 1}:${colName(c)}${range.r2 + 1}`;
+    const keys = new Map<string, Scalar>();
+    for (let r = top; r <= range.r2; r++) {
+      const v = this.value(r, by);
+      if (v === null || v === "" || typeof v === "object") continue;
+      const id = typeof v === "string" ? v.toLowerCase() : `${typeof v}:${v}`;
+      if (!keys.has(id)) keys.set(id, v);
+    }
+    const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+    const groups = [...keys.values()].sort((a, b) => (typeof a === typeof b ? (typeof a === "string" ? collator.compare(a, b as string) : Number(a) - Number(b)) : typeof a === "string" ? 1 : -1));
+    const label = (c: number) => String(this.value(range.r1, c) ?? `Column ${colName(c)}`);
+    const [byName, ofName] = [label(by), label(of)];
+    const ifs = { sum: "SUMIFS", count: "COUNTIFS", average: "AVERAGEIFS", max: "MAXIFS", min: "MINIFS" }[fn];
+    const total = { sum: "SUM", count: "COUNTA", average: "AVERAGE", max: "MAX", min: "MIN" }[fn];
+    this.addSheet();
+    this.change(() => {
+      const sheet = this.sheet;
+      let name = "Summary";
+      for (let n = 2; this.book.sheets.some((s) => s !== sheet && s.name.toLowerCase() === name.toLowerCase()); n++) name = `Summary ${n}`;
+      sheet.name = name;
+      this.put(sheet, 0, 0, byName);
+      this.put(sheet, 0, 1, `${fn[0].toUpperCase()}${fn.slice(1)} of ${ofName}`);
+      groups.forEach((g, i) => {
+        // shortcut: a group whose text has * or ? matches like a wildcard, as in Excel's own SUMIFS.
+        this.put(sheet, i + 1, 0, typeof g === "string" ? `'${g}` : String(g === true ? "TRUE" : g === false ? "FALSE" : g));
+        const criteria = `${column(by)},A${i + 2}`;
+        this.put(sheet, i + 1, 1, fn === "count" ? `=COUNTIFS(${criteria})` : `=${ifs}(${column(of)},${criteria})`);
+      });
+      const end = groups.length + 1;
+      this.put(sheet, end, 0, "Total");
+      this.put(sheet, end, 1, `=${total}(${fn === "count" ? column(by) : column(of)})`);
+    });
+    const header = { bold: true, color: "#FFFFFF", fill: "#4472C4" };
+    this.format({ r1: 0, c1: 0, r2: 0, c2: 1 }, () => header);
+    this.format({ r1: groups.length + 1, c1: 0, r2: groups.length + 1, c2: 1 }, () => ({ bold: true, border: { top: { style: "thin", color: "#4472C4" } } }));
+    this.change(() => this.widen(0, 1, 0, groups.length + 1));
   }
 
   /** Renames a sheet; formulas pointing at it follow. Returns an error message if the name can't be used. */

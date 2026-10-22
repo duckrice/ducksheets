@@ -1,6 +1,6 @@
 // Data tools, as on Excel's Data tab: Remove duplicates and Text to columns.
 
-import { selRange, type Doc } from "./doc";
+import { selRange, type Doc, type SummaryFn } from "./doc";
 import { h } from "./dom";
 import { address, colName, parseAddress, type Range } from "./model";
 import { modal, toast, type MenuItem } from "./ui";
@@ -71,6 +71,26 @@ function textToColumns(doc: Doc) {
   );
 }
 
+function summarize(doc: Doc) {
+  const range = block(doc);
+  if (range.r2 <= range.r1) return toast("Select data with a header row first.");
+  const columns = Array.from({ length: range.c2 - range.c1 + 1 }, (_, i) => range.c1 + i);
+  const pick = (label: string, chosen: number) => {
+    const select = h("select", { class: "tb-input", "aria-label": label }, ...columns.map((c) => h("option", { value: c, selected: c === chosen }, String(doc.value(range.r1, c) ?? `Column ${colName(c)}`)))) as HTMLSelectElement;
+    return [select, h("label", { class: "format-row" }, `${label} `, select)] as const;
+  };
+  const [by, byRow] = pick("Group by", range.c1);
+  const [of, ofRow] = pick("Values from", columns.find((c) => typeof doc.value(range.r1 + 1, c) === "number") ?? range.c2);
+  const fns: [SummaryFn, string][] = [["sum", "Sum"], ["count", "Count"], ["average", "Average"], ["max", "Largest"], ["min", "Smallest"]];
+  const fn = h("select", { class: "tb-input", "aria-label": "Work out" }, ...fns.map(([v, l]) => h("option", { value: v }, l))) as HTMLSelectElement;
+  dialog(
+    "Summarize",
+    [h("p", {}, "Makes a new sheet with each value of one column once, and the sum (or count, average, …) of another for it. It updates when the data changes."), byRow, h("label", { class: "format-row" }, "Work out ", fn), ofRow],
+    () => doc.summarize(range, Number(by.value), Number(of.value), fn.value as SummaryFn),
+    "Summarize",
+  );
+}
+
 /** Excel's table colours: the header's, and the light one for every other row. */
 const TABLE_STYLES: [string, string, string][] = [
   ["Blue", "#4472C4", "#D9E1F2"],
@@ -108,6 +128,7 @@ export function dataMenu(doc: Doc): MenuItem[] {
       label: "Format as table",
       items: TABLE_STYLES.map(([label, header, band]) => ({ label, action: () => doc.formatAsTable(block(doc), header, band) })),
     },
+    { label: "Summarize (PivotTable)…", action: () => summarize(doc) },
     { label: "Goal seek…", action: () => goalSeek(doc) },
     { label: "Remove duplicates…", action: () => removeDuplicates(doc) },
     { label: "Text to columns…", action: () => textToColumns(doc) },

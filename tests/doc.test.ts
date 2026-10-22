@@ -230,3 +230,21 @@ describe("format as table", () => {
     expect(doc.sheet.filter?.range).toEqual({ r1: 0, c1: 0, r2: 3, c2: 1 });
   });
 });
+
+describe("summarize", () => {
+  it("makes a sheet with each group once and formulas that add up its values", () => {
+    const doc = new Doc(newWorkbook());
+    [["Fruit", "Kg"], ["pear", "2"], ["Apple", "3"], ["pear", "4"], ["apple", "1"], ["Plum", "5"]].forEach((row, r) => row.forEach((v, c) => doc.setInput(r, c, v)));
+    doc.summarize({ r1: 0, c1: 0, r2: 5, c2: 1 }, 0, 1, "sum");
+    expect(doc.sheet.name).toBe("Summary");
+    const rows = [0, 1, 2, 3, 4].map((r) => [doc.value(r, 0), doc.value(r, 1)]);
+    expect(rows).toEqual([["Fruit", "Sum of Kg"], ["Apple", 4], ["pear", 6], ["Plum", 5], ["Total", 15]]);
+    doc.active = 0;
+    doc.setInput(1, 1, "10");
+    doc.active = 1;
+    expect(doc.value(2, 1)).toBe(14);
+    doc.active = 0;
+    doc.summarize({ r1: 0, c1: 0, r2: 5, c2: 1 }, 0, 1, "count");
+    expect([doc.sheet.name, doc.value(1, 1), doc.value(4, 1)]).toEqual(["Summary 2", 2, 5]);
+  });
+});
