@@ -671,6 +671,45 @@ export class Doc {
     return removed;
   }
 
+  /**
+   * Goal Seek, as Excel's: finds the number for `input` that makes the formula in `target` give
+   * `goal`, and puts it in (one step to undo). Returns the number, or null if none was found.
+   */
+  goalSeek(target: { r: number; c: number }, goal: number, input: { r: number; c: number }): number | null {
+    const cells = this.sheet.cells;
+    const k = key(input.r, input.c);
+    const original = cells.get(k);
+    const at = (x: number) => {
+      cells.set(k, { ...(original?.s !== undefined ? { s: original.s } : {}), v: x });
+      this.calc.reset();
+      const v = this.calc.value(this.active, target.r, target.c);
+      return typeof v === "number" ? v - goal : NaN;
+    };
+    // The secant method from the number there now, as Excel does; then a wider search if that fails.
+    let x0 = typeof original?.v === "number" ? original.v : 0;
+    let x1 = x0 === 0 ? 1 : x0 * 1.01;
+    let f0 = at(x0);
+    let found: number | null = Math.abs(f0) < 1e-9 ? x0 : null;
+    for (let i = 0; i < 100 && found === null && Number.isFinite(f0); i++) {
+      const f1 = at(x1);
+      if (!Number.isFinite(f1)) break;
+      if (Math.abs(f1) < 1e-9 * Math.max(1, Math.abs(goal))) found = x1;
+      else if (f1 === f0) break;
+      else {
+        const next = x1 - (f1 * (x1 - x0)) / (f1 - f0);
+        [x0, f0, x1] = [x1, f1, next];
+      }
+    }
+    // Put the cell back as it was, then (if a number was found) put it in as one step.
+    if (original) cells.set(k, original);
+    else cells.delete(k);
+    this.calc.reset();
+    if (found === null) return null;
+    const value = Math.abs(found - Math.round(found)) < 1e-9 ? Math.round(found) : found;
+    this.change(() => cells.set(k, { ...(original?.s !== undefined ? { s: original.s } : {}), v: value }));
+    return value;
+  }
+
   /** Splits a column's text at a separator into the columns to its right, each part read as if typed. */
   textToColumns(range: Range, separator: string) {
     if (!separator) return;

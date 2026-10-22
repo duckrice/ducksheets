@@ -2,7 +2,7 @@
 
 import { selRange, type Doc } from "./doc";
 import { h } from "./dom";
-import { colName, type Range } from "./model";
+import { address, colName, parseAddress, type Range } from "./model";
 import { modal, toast, type MenuItem } from "./ui";
 
 /** The selection, or (for a single cell) the block of data around it, as Excel does. */
@@ -71,8 +71,31 @@ function textToColumns(doc: Doc) {
   );
 }
 
+/** Goal Seek: asks which formula should give what, by changing which cell. */
+function goalSeek(doc: Doc) {
+  const here = address(doc.sel.r, doc.sel.c);
+  const set = h("input", { type: "text", class: "tb-input wide", value: here, "aria-label": "Set cell" }) as HTMLInputElement;
+  const to = h("input", { type: "text", class: "tb-input wide", "aria-label": "To value" }) as HTMLInputElement;
+  const by = h("input", { type: "text", class: "tb-input wide", "aria-label": "By changing cell" }) as HTMLInputElement;
+  dialog(
+    "Goal seek",
+    [h("p", {}, "Set cell (a formula)"), set, h("p", {}, "To value"), to, h("p", {}, "By changing cell (a number)"), by],
+    () => {
+      const target = parseAddress(set.value.replace(/\$/g, ""));
+      const input = parseAddress(by.value.replace(/\$/g, ""));
+      const goal = Number(to.value.replace(",", "."));
+      if (!target || !input || !to.value.trim() || Number.isNaN(goal)) return toast("Give two cells and a number.");
+      if (doc.cell(target.r, target.c)?.f === undefined) return toast(`${set.value} needs a formula.`);
+      if (doc.cell(input.r, input.c)?.f !== undefined) return toast(`${by.value} must hold a number, not a formula.`);
+      const found = doc.goalSeek(target, goal, input);
+      toast(found === null ? "Goal Seek didn't find an answer." : `Found it: ${by.value.toUpperCase()} = ${Math.round(found * 1e6) / 1e6}.`);
+    },
+  );
+}
+
 export function dataMenu(doc: Doc): MenuItem[] {
   return [
+    { label: "Goal seek…", action: () => goalSeek(doc) },
     { label: "Remove duplicates…", action: () => removeDuplicates(doc) },
     { label: "Text to columns…", action: () => textToColumns(doc) },
   ];

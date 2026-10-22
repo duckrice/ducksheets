@@ -197,3 +197,24 @@ describe("data tools, format painter and printing", () => {
     expect((html.match(/<tr /g) ?? []).length).toBe(6);
   });
 });
+
+describe("goal seek", () => {
+  it("finds the number that makes a formula give the goal, as one step to undo", () => {
+    const doc = new Doc(newWorkbook());
+    doc.setInput(0, 0, "100");
+    doc.setInput(1, 0, "=PMT(0.05/12,A1,-200000)");
+    const months = doc.goalSeek({ r: 1, c: 0 }, 1500, { r: 0, c: 0 });
+    expect(months).not.toBeNull();
+    expect(doc.value(1, 0) as number).toBeCloseTo(1500, 6);
+    doc.undo();
+    expect(doc.value(0, 0)).toBe(100);
+  });
+
+  it("says so when there's no answer", () => {
+    const doc = new Doc(newWorkbook());
+    doc.setInput(0, 0, "1");
+    doc.setInput(1, 0, "=A1*A1");
+    expect(doc.goalSeek({ r: 1, c: 0 }, -4, { r: 0, c: 0 })).toBeNull();
+    expect(doc.value(0, 0)).toBe(1);
+  });
+});
