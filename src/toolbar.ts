@@ -10,7 +10,7 @@ import { MAX_COLS, MAX_ROWS, type Range } from "./model";
 import { locale } from "./numfmt";
 import { menu, popover } from "./ui";
 import { conditionalMenu } from "./cfmenu";
-import { dataMenu } from "./datatools";
+import { dataMenu, tableMenu } from "./datatools";
 import { validationDialog } from "./valmenu";
 import { lookOf, type Border, type BorderSide, type StyleChange } from "./xlsx/styles";
 
@@ -154,11 +154,37 @@ export function createToolbar(doc: Doc, grid: Grid, actions: ToolbarActions) {
         h("button", { type: "button", class: "btn subtle small wide", onclick: () => (close(), choose(null)) }, none),
       ),
     );
-  const textColor = button("textColor", "Text colour", () => palette(textColor, (color) => apply({ color }), "Automatic"));
-  const fillColor = button("fillColor", "Fill colour", () => palette(fillColor, (fill) => apply({ fill }), "No fill"));
+  /**
+   * A colour button as Excel's: clicking it gives the selection the last colour chosen (shown as a
+   * bar under the icon), the arrow beside it opens the palette.
+   */
+  const colorButton = (name: IconName, title: string, first: string, give: (color: string | null) => void, none: string) => {
+    let last: string | null = first;
+    const bar = h("span", { class: "color-bar" });
+    const show = () => bar.style.setProperty("--bar", last ?? "transparent");
+    show();
+    const main = h("button", { type: "button", class: "tb color-main", title: `${title}`, "aria-label": title, html: icon(name) }, bar);
+    const more = h("button", { type: "button", class: "tb color-more", title: `More colours for ${title.toLowerCase()}`, "aria-label": `Choose the ${title.toLowerCase()}`, html: icon("caret") });
+    for (const el of [main, more]) el.addEventListener("mousedown", (e) => e.preventDefault());
+    main.addEventListener("click", () => give(last));
+    more.addEventListener("click", () =>
+      palette(more, (color) => {
+        last = color;
+        show();
+        give(color);
+      }, none),
+    );
+    return h("span", { class: "color-split" }, main, more);
+  };
+  const textColor = colorButton("textColor", "Text colour", "#C00000", (color) => apply({ color }), "Automatic");
+  const fillColor = colorButton("fillColor", "Fill colour", "#FFFF00", (fill) => apply({ fill }), "No fill");
 
   const conditional = button("conditional", "Conditional formatting", () => menu(conditional, conditionalMenu(doc)));
-  const dataTools = button("table", "Data tools: remove duplicates, text to columns", () => menu(dataTools, dataMenu(doc)));
+  const dataTools = button("table", "Data tools: remove duplicates, text to columns, summarize, goal seek", () => menu(dataTools, dataMenu(doc)));
+  // Format as table, out in the open: a labelled button with the styles to pick from.
+  const tableButton = h("button", { type: "button", class: "tb labelled", title: "Format as table: a coloured header, striped rows and filter buttons for the selected data", html: icon("formatTable") }, "Table");
+  tableButton.addEventListener("mousedown", (e) => e.preventDefault());
+  tableButton.addEventListener("click", () => menu(tableButton, tableMenu(doc)));
 
   // Number formats.
   const formats = numberFormats();
@@ -252,6 +278,7 @@ export function createToolbar(doc: Doc, grid: Grid, actions: ToolbarActions) {
       button("sortAsc", "Sort A to Z (smallest first)", () => sortBy(false)),
       button("sortDesc", "Sort Z to A (largest first)", () => sortBy(true)),
       button("filter", "Filter (Ctrl+Shift+L)", () => doc.toggleFilter(), () => !!doc.sheet.filter),
+      tableButton,
       conditional,
       dataTools,
       button("validation", "Data validation: a list to choose from, or limits on numbers", () => validationDialog(doc)),

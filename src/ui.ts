@@ -38,6 +38,8 @@ export function popover(anchor: HTMLElement, make: (close: () => void) => HTMLEl
 }
 
 export interface MenuItem {
+  /** Colours shown before the label, as a little preview. */
+  swatch?: string[];
   label: string;
   action?: () => void;
   /** A menu inside the menu. */
@@ -69,6 +71,7 @@ export function menu(anchor: HTMLElement, items: MenuItem[]) {
                 }
               },
             },
+            item.swatch ? h("span", { class: "menu-swatch", "aria-hidden": "true" }, ...item.swatch.map((color) => h("span", { style: `background:${color}` }))) : null,
             item.label,
             item.items ? h("span", { class: "menu-more" }, "›") : null,
           ),

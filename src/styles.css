@@ -825,3 +825,69 @@ body {
   resize: vertical;
   font: inherit;
 }
+
+/* ---- colour buttons: apply the last colour, or open the palette ---- */
+.color-split {
+  display: inline-flex;
+  align-items: stretch;
+}
+
+.tb.color-main {
+  position: relative;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+  padding-right: 4px;
+}
+
+.color-bar {
+  position: absolute;
+  left: 6px;
+  right: 4px;
+  bottom: 4px;
+  height: 4px;
+  border-radius: 1px;
+  background: var(--bar);
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.15);
+}
+
+.tb.color-more {
+  min-width: 16px;
+  padding: 0;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.tb.color-more svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* A button with a word beside its icon. */
+.tb.labelled {
+  width: auto;
+  gap: 4px;
+  padding: 0 8px 0 6px;
+  font: inherit;
+  font-size: 13px;
+}
+
+/* The colour preview in front of a menu item (table styles). */
+.menu-swatch {
+  display: inline-flex;
+  flex-direction: column;
+  width: 22px;
+  height: 16px;
+  margin-right: 8px;
+  vertical-align: middle;
+  border-radius: 2px;
+  overflow: hidden;
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 0.15);
+}
+
+.menu-swatch span {
+  flex: 1;
+}
+
+.menu-item:has(.menu-swatch) {
+  justify-content: flex-start;
+}

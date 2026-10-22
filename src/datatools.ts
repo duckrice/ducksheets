@@ -91,6 +91,11 @@ function summarize(doc: Doc) {
   );
 }
 
+/** The table styles to choose from, for the data around the selection. */
+export function tableMenu(doc: Doc): MenuItem[] {
+  return TABLE_STYLES.map(([label, header, band, style]) => ({ label, swatch: [header, band], action: () => doc.formatAsTable(block(doc), header, band, style) }));
+}
+
 /** Excel's table colours: the header's, the light one for every other row, and its own style of that colour. */
 const TABLE_STYLES: [string, string, string, string][] = [
   ["Blue", "#4472C4", "#D9E1F2", "TableStyleMedium2"],
@@ -124,10 +129,7 @@ function goalSeek(doc: Doc) {
 
 export function dataMenu(doc: Doc): MenuItem[] {
   return [
-    {
-      label: "Format as table",
-      items: TABLE_STYLES.map(([label, header, band, style]) => ({ label, action: () => doc.formatAsTable(block(doc), header, band, style) })),
-    },
+    { label: "Format as table", items: tableMenu(doc) },
     { label: "Summarize (PivotTable)…", action: () => summarize(doc) },
     { label: "Goal seek…", action: () => goalSeek(doc) },
     { label: "Remove duplicates…", action: () => removeDuplicates(doc) },
