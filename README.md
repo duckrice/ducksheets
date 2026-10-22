@@ -33,6 +33,7 @@ A free spreadsheet for Windows that opens and saves Excel workbooks (.xlsx, .xls
 - **Data validation.** A drop-down list to choose from (Alt+Down), or limits on numbers; values that don't fit are refused.
 - **Data tools.** AutoSum, sort, filter (with search), remove duplicates, text to columns, goal seek, freeze panes, find and replace.
 - **Typing help.** AutoComplete finishes words from the column, Format cells (Ctrl+1), format painter, Paste special (values, formulas, formats, transpose) and Show formulas (Ctrl+`).
+- **Pictures.** Insert one, or paste a screenshot with Ctrl+V; drag to move it, its corner to resize. Saved as Excel's own pictures.
 - **Links.** Ctrl+K links a cell to a web or e-mail address or a place in the workbook; a click follows it, and HYPERLINK works too.
 - **Notes.** Notes on cells, as in Excel (Shift+F2, or right-click): a red corner shows where they are, and the mouse over the cell shows the note.
 - **Printing.** Ctrl+P prints the sheet (or the selection), with its formats; choose "Microsoft Print to PDF" to save a PDF.

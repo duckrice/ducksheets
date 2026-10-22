@@ -21,6 +21,7 @@ export interface ToolbarActions {
   autoSum(): void;
   find(): void;
   chart(): void;
+  picture(): void;
   print(): void;
   /** Format painter: starts copying formats, or (when on) stops. */
   painter(): void;
@@ -256,6 +257,7 @@ export function createToolbar(doc: Doc, grid: Grid, actions: ToolbarActions) {
       button("validation", "Data validation: a list to choose from, or limits on numbers", () => validationDialog(doc)),
       freeze,
       button("chart", "Insert a chart of the selected data", actions.chart),
+      button("picture", "Insert a picture (or paste one with Ctrl+V)", actions.picture),
       button("find", "Find and replace (Ctrl+F)", actions.find),
     ),
   );

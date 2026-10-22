@@ -18,7 +18,7 @@ import { lookOf } from "./xlsx/styles";
 import { ask, askName, askSave, menu, modal, popover, toast, type MenuItem } from "./ui";
 import { baseName, onCloseRequested, onFilesOpened, openUrl, pickFile, pickSavePath, readPath, setTitle, startupFiles, writePath, type OpenedFile } from "./platform";
 import { offerUpdate } from "./updates";
-import { insertChart, renderCharts } from "./charts";
+import { insertChart, insertPicture, renderCharts } from "./charts";
 import { formatCells } from "./formatdialog";
 import { printSheet } from "./print";
 import { pasteSpecial } from "./pastespecial";
@@ -82,6 +82,14 @@ function mount(next: Doc) {
     autoSum,
     find: () => findReplace(false),
     chart: () => insertChart(doc, grid),
+    picture: () => {
+      const input = h("input", { type: "file", accept: "image/png,image/jpeg,image/gif,image/bmp" }) as HTMLInputElement;
+      input.addEventListener("change", () => {
+        const file = input.files?.[0];
+        if (file) void insertPicture(doc, grid, file).catch(() => toast("That picture couldn't be read."));
+      });
+      input.click();
+    },
     print: () => {
       if (!printSheet(doc)) toast("There's nothing on this sheet to print.");
     },
@@ -546,6 +554,9 @@ document.addEventListener("cut", (e) => copy(e, true));
 document.addEventListener("paste", (e) => {
   if (!doc || editor.active || isTyping(e.target as Element)) return;
   e.preventDefault();
+  // A picture on the clipboard (a screenshot, an image copied from elsewhere) goes on the sheet.
+  const image = [...(e.clipboardData?.files ?? [])].find((f) => f.type.startsWith("image/"));
+  if (image) return void insertPicture(doc, grid, image).catch(() => toast("That picture couldn't be read."));
   const text = e.clipboardData?.getData("text/plain") ?? "";
   const at = { r: selRange(doc.sel).r1, c: selRange(doc.sel).c1 };
   // Our own copy, if the clipboard still holds it: with formulas and formats.

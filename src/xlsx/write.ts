@@ -10,7 +10,7 @@ import { CellError, address, colOf, key, rangeAddress, rowOf, usedRange, type Sc
 import { formatValue } from "../numfmt";
 import { pxToWidth, readRels, relsPath, resolvePath } from "./read";
 import { lookOf, writeStyles } from "./styles";
-import { EMPTY_DRAWING, anchorXml, chartXml } from "./charts";
+import { EMPTY_DRAWING, anchorXml, chartXml, pictureAnchorXml } from "./charts";
 import { chartData } from "../chartdata";
 import { conditionalXml } from "../conditional";
 import { ARRAY_FUNCTIONS } from "../calc";
@@ -256,7 +256,27 @@ async function writeDrawing(zip: JSZip, book: Workbook, calc: Calculator, index:
   let nextRel = Math.max(0, ...Array.from(relRoot.children).map((el) => Number((el.getAttribute("Id") ?? "").replace(/\D/g, "")) || 0)) + 1;
   let nextShape = Math.max(1, ...Array.from(drawingDoc.getElementsByTagNameNS("*", "cNvPr")).map((el) => Number(el.getAttribute("id")) || 0)) + 1;
   let k = 1;
+  let m = 1;
   for (const chart of sheet.charts) {
+    if (chart.kind === "picture") {
+      // The picture's bytes in xl/media, linked from the drawing.
+      const match = /^data:image\/(png|jpeg|gif|bmp);base64,(.*)$/.exec(chart.src ?? "");
+      if (!match) continue;
+      const ext = match[1] === "jpeg" ? "jpg" : match[1];
+      while (zip.file(`xl/media/duckpicture${m}.${ext}`)) m++;
+      const mediaPath = `xl/media/duckpicture${m}.${ext}`;
+      zip.file(mediaPath, match[2], { base64: true });
+      override(mediaPath, `image/${match[1]}`);
+      const picRel = `rId${nextRel++}`;
+      const rel = drawingRels.createElementNS(PKG_REL, "Relationship");
+      rel.setAttribute("Id", picRel);
+      rel.setAttribute("Type", `${REL}/image`);
+      rel.setAttribute("Target", relative(drawingPath, mediaPath));
+      relRoot.appendChild(rel);
+      const anchor = xml(`<x xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">${pictureAnchorXml(chart, sheet, picRel, nextShape++)}</x>`).documentElement.firstElementChild!;
+      drawingDoc.documentElement.appendChild(drawingDoc.importNode(anchor, true));
+      continue;
+    }
     while (zip.file(`xl/charts/chart${k}.xml`)) k++;
     const chartPath = `xl/charts/chart${k}.xml`;
     const source = {

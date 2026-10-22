@@ -49,7 +49,7 @@ export interface Filter {
   shown: Map<number, Set<string>>;
 }
 
-export type ChartKind = "column" | "bar" | "line" | "area" | "pie" | "doughnut" | "scatter";
+export type ChartKind = "column" | "bar" | "line" | "area" | "pie" | "doughnut" | "scatter" | "picture";
 
 /** A chart on a sheet: its data block (first row names the series, first column the categories) and where it sits. */
 export interface Chart {
@@ -57,6 +57,8 @@ export interface Chart {
   kind: ChartKind;
   data: Range;
   title: string;
+  /** For a picture (kind "picture", which moves and resizes as charts do): the image as a data URL. */
+  src?: string;
   /** The cell its top-left corner is in, the offset into that cell, and its size, in pixels at 100%. */
   at: { r: number; c: number; dx: number; dy: number; w: number; h: number };
 }

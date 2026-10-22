@@ -106,26 +106,40 @@ export async function readCharts(zip: JSZip, sheet: Sheet): Promise<void> {
   const cols = edges(sheet.colWidths, sheet.hiddenCols, sheet.defaultColWidth);
   const rows = edges(sheet.rowHeights, sheet.hiddenRows, sheet.defaultRowHeight);
   const owned: string[] = [];
+  const point = (el: Element | null) => ({
+    c: Number(kid(el, "col")?.textContent ?? 0),
+    cOff: Math.round(Number(kid(el, "colOff")?.textContent ?? 0) / EMU),
+    r: Number(kid(el, "row")?.textContent ?? 0),
+    rOff: Math.round(Number(kid(el, "rowOff")?.textContent ?? 0) / EMU),
+  });
+  const place = (anchor: Element) => {
+    const from = point(kid(anchor, "from"));
+    const to = point(kid(anchor, "to"));
+    return { r: from.r, c: from.c, dx: from.cOff, dy: from.rOff, w: Math.max(20, cols.span(from.c, from.cOff, to.c, to.cOff)), h: Math.max(20, rows.span(from.r, from.rOff, to.r, to.rOff)) };
+  };
   for (const anchor of kids(doc.documentElement, "twoCellAnchor")) {
+    // Pictures: shown, moved and saved by DuckSheets as charts are.
+    const blip = kid(anchor, "pic") && deep(anchor, "blip");
+    const media = blip && drawingRels.get(blip.getAttributeNS(R, "embed") ?? "");
+    if (media) {
+      const bytes = await zip.file(media.path)?.async("base64");
+      const ext = media.path.split(".").pop()?.toLowerCase() ?? "png";
+      if (bytes && ["png", "jpg", "jpeg", "gif", "bmp"].includes(ext)) {
+        const type = ext === "jpg" ? "jpeg" : ext;
+        sheet.charts.push({ id: Math.random().toString(36).slice(2, 9), kind: "picture", src: `data:image/${type};base64,${bytes}`, data: { r1: 0, c1: 0, r2: 0, c2: 0 }, title: "", at: place(anchor) });
+        owned.push(media.path);
+        doc.documentElement.removeChild(anchor);
+        continue;
+      }
+    }
     const chartEl = deep(anchor, "chart");
     const chartRel = chartEl && drawingRels.get(chartEl.getAttributeNS(R, "id") ?? "");
     const chartText = chartRel && (await zip.file(chartRel.path)?.async("string"));
     if (!chartRel || !chartText) continue;
     const parsed = parseChart(chartText, sheet.name);
     if (!parsed) continue;
-    const point = (el: Element | null) => ({
-      c: Number(kid(el, "col")?.textContent ?? 0),
-      cOff: Math.round(Number(kid(el, "colOff")?.textContent ?? 0) / EMU),
-      r: Number(kid(el, "row")?.textContent ?? 0),
-      rOff: Math.round(Number(kid(el, "rowOff")?.textContent ?? 0) / EMU),
-    });
-    const from = point(kid(anchor, "from"));
-    const to = point(kid(anchor, "to"));
-    sheet.charts.push({
-      ...parsed,
-      id: Math.random().toString(36).slice(2, 9),
-      at: { r: from.r, c: from.c, dx: from.cOff, dy: from.rOff, w: Math.max(60, cols.span(from.c, from.cOff, to.c, to.cOff)), h: Math.max(40, rows.span(from.r, from.rOff, to.r, to.rOff)) },
-    });
+    const at = place(anchor);
+    sheet.charts.push({ ...parsed, id: Math.random().toString(36).slice(2, 9), at: { ...at, w: Math.max(60, at.w), h: Math.max(40, at.h) } });
     owned.push(chartRel.path);
     doc.documentElement.removeChild(anchor);
   }
@@ -197,6 +211,12 @@ export function chartXml(chart: Chart, sheetName: string, content: ChartContent)
   const title = chart.title ? `<c:title><c:tx><c:rich><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr sz="1400" b="0"/></a:pPr><a:r><a:rPr lang="en-US" sz="1400" b="0"/><a:t>${esc(chart.title)}</a:t></a:r></a:p></c:rich></c:tx><c:overlay val="0"/></c:title><c:autoTitleDeleted val="0"/>` : '<c:autoTitleDeleted val="1"/>';
   const legend = chart.kind === "pie" || chart.kind === "doughnut" || content.series.length > 1 ? '<c:legend><c:legendPos val="b"/><c:overlay val="0"/></c:legend>' : "";
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<c:chartSpace xmlns:c="${C}" xmlns:a="${A}" xmlns:r="${R}"><c:roundedCorners val="0"/><c:chart>${title}<c:plotArea><c:layout/>${plot}</c:plotArea>${legend}<c:plotVisOnly val="1"/><c:dispBlanksAs val="gap"/></c:chart><c:spPr><a:solidFill><a:srgbClr val="FFFFFF"/></a:solidFill><a:ln w="9525"><a:solidFill><a:srgbClr val="D9D9D9"/></a:solidFill></a:ln></c:spPr></c:chartSpace>`;
+}
+
+/** The anchor for a picture: as a chart's, with the picture (linked by `relId`) in place of the chart. */
+export function pictureAnchorXml(chart: Chart, sheet: Sheet, relId: string, shapeId: number): string {
+  const pic = `<xdr:pic><xdr:nvPicPr><xdr:cNvPr id="${shapeId}" name="Picture ${shapeId}"/><xdr:cNvPicPr><a:picLocks noChangeAspect="1"/></xdr:cNvPicPr></xdr:nvPicPr><xdr:blipFill><a:blip xmlns:r="${R}" r:embed="${relId}"/><a:stretch><a:fillRect/></a:stretch></xdr:blipFill><xdr:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${chart.at.w * EMU}" cy="${chart.at.h * EMU}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr></xdr:pic>`;
+  return anchorXml(chart, sheet, relId, shapeId).replace(/<xdr:graphicFrame[\s\S]*<\/xdr:graphicFrame>/, pic);
 }
 
 /** The anchor that places a chart in the drawing, from its cell to the cell its far corner reaches. */

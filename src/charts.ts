@@ -36,6 +36,10 @@ const text = (x: number, y: number, content: string, attrs: Record<string, strin
 /** The chart drawn as an SVG, w × h. */
 export function drawChart(doc: Doc, chart: Chart, w: number, h: number): SVGSVGElement {
   const root = svg("svg", { width: w, height: h, viewBox: `0 0 ${w} ${h}`, class: "chart-svg" });
+  if (chart.kind === "picture") {
+    root.append(svg("image", { href: chart.src ?? "", x: 0, y: 0, width: w, height: h, preserveAspectRatio: "none" }));
+    return root;
+  }
   root.append(svg("rect", { x: 0, y: 0, width: w, height: h, fill: "#ffffff" }));
   const { categories, series, format, xs } = chartData(doc, chart, doc.active);
   const shown = (n: number) => formatValue(n, format === "General" || format === "@" ? "General" : format, doc.book.date1904).text;
@@ -296,6 +300,7 @@ function grab(e: PointerEvent, doc: Doc, grid: Grid, chart: Chart, resize: boole
 }
 
 function chartMenu(doc: Doc, chart: Chart, anchor: HTMLElement) {
+  if (chart.kind === "picture") return menu(anchor, [{ label: "Delete picture", danger: true, action: () => removeChart(doc, chart.id) }]);
   const kind = (k: ChartKind, label: string) => ({ label: `${chart.kind === k ? "✓ " : ""}${label}`, action: () => update(doc, chart.id, (c) => ({ ...c, kind: k })) });
   menu(anchor, [
     { label: "Chart type", items: [kind("column", "Column"), kind("bar", "Bar"), kind("line", "Line"), kind("area", "Area"), kind("pie", "Pie"), kind("doughnut", "Doughnut"), kind("scatter", "Scatter (XY)")] },
@@ -312,6 +317,28 @@ function chartMenu(doc: Doc, chart: Chart, anchor: HTMLElement) {
 }
 
 /** A chart of the selected cells (or the block of data around the cursor), next to the data. */
+/** Puts a picture on the sheet at the selected cell, at its own size (but no bigger than 600 px wide). */
+export async function insertPicture(doc: Doc, grid: Grid, file: Blob) {
+  const src = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+  const size = await new Promise<{ w: number; h: number }>((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve({ w: img.naturalWidth || 300, h: img.naturalHeight || 200 });
+    img.onerror = () => resolve({ w: 300, h: 200 });
+    img.src = src;
+  });
+  const scale = Math.min(1, 600 / size.w);
+  const { r, c } = doc.sel;
+  const picture: Chart = { id: Math.random().toString(36).slice(2, 9), kind: "picture", src, data: { r1: r, c1: c, r2: r, c2: c }, title: "", at: { r, c, dx: 0, dy: 0, w: Math.round(size.w * scale), h: Math.round(size.h * scale) } };
+  chosen = picture.id;
+  doc.change(() => doc.sheet.charts.push(picture));
+  grid.reveal(r, c);
+}
+
 export function insertChart(doc: Doc, grid: Grid) {
   const sel = selRange(doc.sel);
   const data = sel.r1 === sel.r2 && sel.c1 === sel.c2 ? doc.region(sel.r1, sel.c1) : sel;
