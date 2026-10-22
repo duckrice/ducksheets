@@ -49,7 +49,7 @@ export interface Filter {
   shown: Map<number, Set<string>>;
 }
 
-export type ChartKind = "column" | "bar" | "line" | "area" | "pie" | "doughnut";
+export type ChartKind = "column" | "bar" | "line" | "area" | "pie" | "doughnut" | "scatter";
 
 /** A chart on a sheet: its data block (first row names the series, first column the categories) and where it sits. */
 export interface Chart {

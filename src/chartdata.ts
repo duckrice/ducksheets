@@ -19,12 +19,13 @@ export interface ChartSource {
 }
 
 /** What a chart shows: category names along the axis, and series of numbers. */
-export function chartData(doc: ChartSource, chart: Chart, sheet: number): { categories: string[]; series: Series[]; format: string; headed: boolean; labelled: boolean } {
+export function chartData(doc: ChartSource, chart: Chart, sheet: number): { categories: string[]; series: Series[]; format: string; headed: boolean; labelled: boolean; xs: (number | null)[] } {
   const { data } = chart;
   const value = (r: number, c: number) => doc.value(r, c, sheet);
   // A first row of text (or a blank corner over text) names the series.
   const headed = data.r2 > data.r1 && [...Array(data.c2 - data.c1 + 1).keys()].some((j) => typeof value(data.r1, data.c1 + j) === "string") && typeof value(data.r1 + 1, data.c2) === "number";
-  const firstColLabels = data.c2 > data.c1 && [...Array(data.r2 - data.r1 + 1).keys()].slice(headed ? 1 : 0).some((i) => typeof value(data.r1 + i, data.c1) === "string");
+  // A scatter chart's first column is its x values.
+  const firstColLabels = (chart.kind === "scatter" && data.c2 > data.c1) || data.c2 > data.c1 && [...Array(data.r2 - data.r1 + 1).keys()].slice(headed ? 1 : 0).some((i) => typeof value(data.r1 + i, data.c1) === "string");
   const top = headed ? data.r1 + 1 : data.r1;
   const left = firstColLabels ? data.c1 + 1 : data.c1;
   const categories: string[] = [];
@@ -39,6 +40,11 @@ export function chartData(doc: ChartSource, chart: Chart, sheet: number): { cate
     series.push({ name: headed ? doc.shown(data.r1, c, sheet) : `Series ${c - left + 1}`, values });
   }
   const format = lookOf(doc.book.styles, doc.cell(top, left, sheet)?.s).numFmt;
-  return { categories, series, format, headed, labelled: firstColLabels };
+  const xs: (number | null)[] = [];
+  for (let r = top; r <= data.r2; r++) {
+    const v = value(r, data.c1);
+    xs.push(typeof v === "number" ? v : null);
+  }
+  return { categories, series, format, headed, labelled: firstColLabels, xs };
 }
 

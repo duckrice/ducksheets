@@ -37,7 +37,7 @@ const text = (x: number, y: number, content: string, attrs: Record<string, strin
 export function drawChart(doc: Doc, chart: Chart, w: number, h: number): SVGSVGElement {
   const root = svg("svg", { width: w, height: h, viewBox: `0 0 ${w} ${h}`, class: "chart-svg" });
   root.append(svg("rect", { x: 0, y: 0, width: w, height: h, fill: "#ffffff" }));
-  const { categories, series, format } = chartData(doc, chart, doc.active);
+  const { categories, series, format, xs } = chartData(doc, chart, doc.active);
   const shown = (n: number) => formatValue(n, format === "General" || format === "@" ? "General" : format, doc.book.date1904).text;
   let top = 12;
   if (chart.title) {
@@ -89,6 +89,30 @@ export function drawChart(doc: Doc, chart: Chart, w: number, h: number): SVGSVGE
     });
     // A doughnut is a pie with its middle cut out.
     if (chart.kind === "doughnut") root.append(svg("circle", { cx, cy, r: r * 0.5, fill: "#ffffff" }));
+    return root;
+  }
+
+  if (chart.kind === "scatter") {
+    // Points at their x and y, both axes numbers.
+    const xv = xs.filter((v): v is number => v !== null);
+    const yv = series.flatMap((s) => s.values).filter((v): v is number => v !== null);
+    if (!xv.length || !yv.length) return root;
+    const sx = niceScale(Math.min(...xv), Math.max(...xv));
+    const sy = niceScale(Math.min(...yv), Math.max(...yv));
+    const labelW = Math.max(...[sy.lo, sy.hi].map((n) => shown(n).length)) * 6.5 + 10;
+    const plot = { x: labelW + 6, y: top, w: w - labelW - 20, h: bottom - top - 20 };
+    if (plot.w < 20 || plot.h < 20) return root;
+    const X = (v: number) => plot.x + ((v - sx.lo) / (sx.hi - sx.lo)) * plot.w;
+    const Y = (v: number) => plot.y + plot.h - ((v - sy.lo) / (sy.hi - sy.lo)) * plot.h;
+    for (let v = sy.lo; v <= sy.hi + sy.step / 2; v += sy.step) root.append(svg("line", { x1: plot.x, y1: Y(v), x2: plot.x + plot.w, y2: Y(v), stroke: "#d9d9d9" }), text(plot.x - 6, Y(v) + 4, shown(v), { "text-anchor": "end" }));
+    for (let v = sx.lo; v <= sx.hi + sx.step / 2; v += sx.step) root.append(text(X(v), plot.y + plot.h + 15, shown(v), { "text-anchor": "middle" }));
+    root.append(svg("line", { x1: plot.x, y1: plot.y + plot.h, x2: plot.x + plot.w, y2: plot.y + plot.h, stroke: "#bfbfbf" }));
+    series.forEach((s, k) =>
+      s.values.forEach((v, i) => {
+        const x = xs[i];
+        if (v !== null && x !== null) root.append(svg("circle", { cx: X(x), cy: Y(v), r: 3.5, fill: CHART_COLORS[k % CHART_COLORS.length] }));
+      }),
+    );
     return root;
   }
 
@@ -274,7 +298,7 @@ function grab(e: PointerEvent, doc: Doc, grid: Grid, chart: Chart, resize: boole
 function chartMenu(doc: Doc, chart: Chart, anchor: HTMLElement) {
   const kind = (k: ChartKind, label: string) => ({ label: `${chart.kind === k ? "✓ " : ""}${label}`, action: () => update(doc, chart.id, (c) => ({ ...c, kind: k })) });
   menu(anchor, [
-    { label: "Chart type", items: [kind("column", "Column"), kind("bar", "Bar"), kind("line", "Line"), kind("area", "Area"), kind("pie", "Pie"), kind("doughnut", "Doughnut")] },
+    { label: "Chart type", items: [kind("column", "Column"), kind("bar", "Bar"), kind("line", "Line"), kind("area", "Area"), kind("pie", "Pie"), kind("doughnut", "Doughnut"), kind("scatter", "Scatter (XY)")] },
     {
       label: "Title…",
       action: () =>

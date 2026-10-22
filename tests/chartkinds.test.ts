@@ -17,11 +17,11 @@ function sample(kinds: ChartKind[]): Workbook {
   return book;
 }
 
-describe("area and doughnut charts", () => {
+describe("area, doughnut and scatter charts", () => {
   it("are kept in the .xlsx file as what they are", async () => {
-    const book = sample(["area", "doughnut"]);
+    const book = sample(["area", "doughnut", "scatter"]);
     const again = await readXlsx(await writeXlsx(book, new Calculator(book)));
-    expect(again.sheets[0].charts.map((c) => c.kind)).toEqual(["area", "doughnut"]);
+    expect(again.sheets[0].charts.map((c) => c.kind)).toEqual(["area", "doughnut", "scatter"]);
   });
 });
 
@@ -29,7 +29,7 @@ const excel = process.env.EXCEL_CHECK ? describe : describe.skip;
 
 excel("area and doughnut charts in the real Excel", () => {
   it("are Excel's own charts of those kinds", async () => {
-    const book = sample(["area", "doughnut"]);
+    const book = sample(["area", "doughnut", "scatter"]);
     const dir = mkdtempSync(join(tmpdir(), "ducksheets-charts-"));
     const file = join(dir, "charts.xlsx");
     writeFileSync(file, await writeXlsx(book, new Calculator(book)));
@@ -40,14 +40,14 @@ $xl.Visible = $false; $xl.DisplayAlerts = $false
 try {
   $wb = $xl.Workbooks.Open('${file}')
   $s = $wb.Worksheets.Item(1)
-  $out = [ordered]@{ count = $s.ChartObjects().Count; first = $s.ChartObjects(1).Chart.ChartType; second = $s.ChartObjects(2).Chart.ChartType; series = $s.ChartObjects(1).Chart.SeriesCollection().Count }
+  $out = [ordered]@{ count = $s.ChartObjects().Count; first = $s.ChartObjects(1).Chart.ChartType; second = $s.ChartObjects(2).Chart.ChartType; third = $s.ChartObjects(3).Chart.ChartType; series = $s.ChartObjects(1).Chart.SeriesCollection().Count }
   $wb.Close($false)
   $out | ConvertTo-Json -Compress
 } finally { $xl.Quit() }`;
     const scriptFile = join(dir, "check.ps1");
     writeFileSync(scriptFile, script, "utf8");
     const report = JSON.parse(execFileSync("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptFile], { encoding: "utf8" }));
-    // xlArea is 1, xlDoughnut -4120.
-    expect(report).toEqual({ count: 2, first: 1, second: -4120, series: 2 });
+    // xlArea is 1, xlDoughnut -4120, xlXYScatter -4169.
+    expect(report).toEqual({ count: 3, first: 1, second: -4120, third: -4169, series: 2 });
   }, 60_000);
 });

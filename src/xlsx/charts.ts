@@ -43,20 +43,21 @@ export function parseChart(text: string, sheetName: string): Omit<Chart, "id" | 
   else if (type.localName === "lineChart") kind = "line";
   else if (type.localName === "pieChart") kind = "pie";
   else if (type.localName === "doughnutChart") kind = "doughnut";
+  else if (type.localName === "scatterChart") kind = "scatter";
   else if (type.localName === "areaChart" && ["standard", null].includes(kid(type, "grouping")?.getAttribute("val") ?? null)) kind = "area";
   else return null;
   if (type.localName === "barChart" && !["clustered", null].includes(kid(type, "grouping")?.getAttribute("val") ?? null)) return null;
   const series = kids(type, "ser");
   if (!series.length) return null;
   const f = (el: Element | null, part: string) => deep(kid(el, part), "f")?.textContent ?? null;
-  const vals = series.map((s) => refRange(f(s, "val"), sheetName));
+  const vals = series.map((s) => refRange(f(s, "val") ?? f(s, "yVal"), sheetName));
   if (vals.some((v) => !v || v.c1 !== v.c2)) return null;
   const v = vals as Range[];
   const r1 = v[0].r1;
   const r2 = v[0].r2;
   // Series in neighbouring columns, over the same rows.
   if (v.some((x, i) => x.r1 !== r1 || x.r2 !== r2 || x.c1 !== v[0].c1 + i)) return null;
-  const cat = refRange(f(series[0], "cat"), sheetName);
+  const cat = refRange(f(series[0], "cat") ?? f(series[0], "xVal"), sheetName);
   if (cat && (cat.c1 !== cat.c2 || cat.c1 !== v[0].c1 - 1 || cat.r1 !== r1 || cat.r2 !== r2)) return null;
   const names = series.map((s) => refRange(f(s, "tx"), sheetName));
   const headed = names.every((n, i) => n && n.r1 === r1 - 1 && n.c1 === v[i].c1);
@@ -140,6 +141,8 @@ export interface ChartContent {
   headed: boolean;
   labelled: boolean;
   format: string;
+  /** The first column as numbers: a scatter chart's x values. */
+  xs: (number | null)[];
 }
 
 const COLORS = ["4472C4", "ED7D31", "A5A5A5", "FFC000", "5B9BD5", "70AD47", "264478", "9E480E", "636363", "997300"];
@@ -169,6 +172,12 @@ export function chartXml(chart: Chart, sheetName: string, content: ChartContent)
       ? `<c:cat><c:strRef><c:f>${esc(abs(sheetName, { r1: top, c1: data.c1, r2: data.r2, c2: data.c1 }))}</c:f><c:strCache><c:ptCount val="${content.categories.length}"/>${points(content.categories)}</c:strCache></c:strRef></c:cat>`
       : "";
     const val = `<c:val><c:numRef><c:f>${esc(abs(sheetName, { r1: top, c1: c, r2: data.r2, c2: c }))}</c:f><c:numCache><c:formatCode>${esc(content.format)}</c:formatCode><c:ptCount val="${s.values.length}"/>${points(s.values)}</c:numCache></c:numRef></c:val>`;
+    if (chart.kind === "scatter") {
+      const xRange = esc(abs(sheetName, { r1: top, c1: data.c1, r2: data.r2, c2: data.c1 }));
+      const xVal = `<c:xVal><c:numRef><c:f>${xRange}</c:f><c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="${content.xs.length}"/>${points(content.xs)}</c:numCache></c:numRef></c:xVal>`;
+      const marker = `<c:spPr><a:ln w="19050"><a:noFill/></a:ln></c:spPr><c:marker><c:symbol val="circle"/><c:size val="6"/><c:spPr><a:solidFill><a:srgbClr val="${color}"/></a:solidFill></c:spPr></c:marker>`;
+      return `<c:ser><c:idx val="${i}"/><c:order val="${i}"/>${tx}${marker}${xVal}${val.replace(/^<c:val>/, "<c:yVal>").replace(/<\/c:val>$/, "</c:yVal>")}<c:smooth val="0"/></c:ser>`;
+    }
     return `<c:ser><c:idx val="${i}"/><c:order val="${i}"/>${tx}${fill}${slices}${cat}${val}${chart.kind === "line" ? '<c:smooth val="0"/>' : ""}</c:ser>`;
   });
   const axes = (catPos: string, valPos: string) =>
@@ -178,7 +187,11 @@ export function chartXml(chart: Chart, sheetName: string, content: ChartContent)
   let plot: string;
   if (chart.kind === "pie") plot = `<c:pieChart><c:varyColors val="1"/>${series[0] ?? ""}<c:firstSliceAng val="0"/></c:pieChart>`;
   else if (chart.kind === "doughnut") plot = `<c:doughnutChart><c:varyColors val="1"/>${series[0] ?? ""}<c:firstSliceAng val="0"/><c:holeSize val="50"/></c:doughnutChart>`;
-  else if (chart.kind === "area") plot = `<c:areaChart><c:grouping val="standard"/><c:varyColors val="0"/>${series.join("")}${ids}</c:areaChart>${axes("b", "l")}`;
+  else if (chart.kind === "scatter") {
+    const valAx = (id: number, cross: number, pos: string, grid: boolean) =>
+      `<c:valAx><c:axId val="${id}"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="${pos}"/>${grid ? '<c:majorGridlines><c:spPr><a:ln w="9525"><a:solidFill><a:srgbClr val="D9D9D9"/></a:solidFill></a:ln></c:spPr></c:majorGridlines>' : ""}<c:numFmt formatCode="General" sourceLinked="1"/><c:majorTickMark val="none"/><c:minorTickMark val="none"/><c:tickLblPos val="nextTo"/><c:crossAx val="${cross}"/><c:crosses val="autoZero"/><c:crossBetween val="midCat"/></c:valAx>`;
+    plot = `<c:scatterChart><c:scatterStyle val="lineMarker"/><c:varyColors val="0"/>${series.join("")}${ids}</c:scatterChart>${valAx(500000001, 500000002, "b", false)}${valAx(500000002, 500000001, "l", true)}`;
+  } else if (chart.kind === "area") plot = `<c:areaChart><c:grouping val="standard"/><c:varyColors val="0"/>${series.join("")}${ids}</c:areaChart>${axes("b", "l")}`;
   else if (chart.kind === "line") plot = `<c:lineChart><c:grouping val="standard"/><c:varyColors val="0"/>${series.join("")}<c:marker val="1"/>${ids}</c:lineChart>${axes("b", "l")}`;
   else plot = `<c:barChart><c:barDir val="${chart.kind === "bar" ? "bar" : "col"}"/><c:grouping val="clustered"/><c:varyColors val="0"/>${series.join("")}<c:gapWidth val="150"/>${ids}</c:barChart>${axes(chart.kind === "bar" ? "l" : "b", chart.kind === "bar" ? "b" : "l")}`;
   const title = chart.title ? `<c:title><c:tx><c:rich><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr sz="1400" b="0"/></a:pPr><a:r><a:rPr lang="en-US" sz="1400" b="0"/><a:t>${esc(chart.title)}</a:t></a:r></a:p></c:rich></c:tx><c:overlay val="0"/></c:title><c:autoTitleDeleted val="0"/>` : '<c:autoTitleDeleted val="1"/>';
