@@ -71,6 +71,15 @@ function textToColumns(doc: Doc) {
   );
 }
 
+/** Excel's table colours: the header's, and the light one for every other row. */
+const TABLE_STYLES: [string, string, string][] = [
+  ["Blue", "#4472C4", "#D9E1F2"],
+  ["Orange", "#ED7D31", "#FCE4D6"],
+  ["Green", "#70AD47", "#E2EFDA"],
+  ["Grey", "#7F7F7F", "#EDEDED"],
+  ["Gold", "#BF8F00", "#FFF2CC"],
+];
+
 /** Goal Seek: asks which formula should give what, by changing which cell. */
 function goalSeek(doc: Doc) {
   const here = address(doc.sel.r, doc.sel.c);
@@ -95,6 +104,10 @@ function goalSeek(doc: Doc) {
 
 export function dataMenu(doc: Doc): MenuItem[] {
   return [
+    {
+      label: "Format as table",
+      items: TABLE_STYLES.map(([label, header, band]) => ({ label, action: () => doc.formatAsTable(block(doc), header, band) })),
+    },
     { label: "Goal seek…", action: () => goalSeek(doc) },
     { label: "Remove duplicates…", action: () => removeDuplicates(doc) },
     { label: "Text to columns…", action: () => textToColumns(doc) },

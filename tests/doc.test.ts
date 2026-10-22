@@ -218,3 +218,15 @@ describe("goal seek", () => {
     expect(doc.value(0, 0)).toBe(1);
   });
 });
+
+describe("format as table", () => {
+  it("colours the header, stripes the rows and turns the filter on", () => {
+    const doc = new Doc(newWorkbook());
+    [["Name", "Mark"], ["Kari", "5"], ["Ola", "4"], ["Per", "6"]].forEach((row, r) => row.forEach((v, c) => doc.setInput(r, c, v)));
+    doc.formatAsTable({ r1: 0, c1: 0, r2: 3, c2: 1 }, "#4472C4", "#D9E1F2");
+    const look = (r: number, c: number) => lookOf(doc.book.styles, doc.cell(r, c)?.s);
+    expect([look(0, 0).fill, look(0, 0).font.bold, look(0, 0).font.color]).toEqual(["#4472C4", true, "#FFFFFF"]);
+    expect([look(1, 1).fill, look(2, 1).fill, look(3, 1).fill]).toEqual(["#D9E1F2", null, "#D9E1F2"]);
+    expect(doc.sheet.filter?.range).toEqual({ r1: 0, c1: 0, r2: 3, c2: 1 });
+  });
+});

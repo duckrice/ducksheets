@@ -741,6 +741,23 @@ export class Doc {
     });
   }
 
+  /**
+   * Format as table, as Excel's quick styles: a coloured header row in white bold, rows striped in
+   * a light shade, thin lines, and filter buttons on the header.
+   */
+  formatAsTable(range: Range, header: string, band: string) {
+    const last = Math.min(range.r2, this.lastRow(range));
+    const line = { style: "thin", color: header };
+    this.format({ ...range, r2: last }, (_s, r) =>
+      r === range.r1
+        ? { bold: true, color: "#FFFFFF", fill: header, border: { bottom: line } }
+        : { fill: (r - range.r1) % 2 === 1 ? band : null, border: { bottom: { style: "thin", color: band } } },
+    );
+    this.change(() => {
+      this.sheet.filter = { range: { ...range, r2: last }, shown: new Map() };
+    });
+  }
+
   /** Turns filtering on for the data around the selection, or off. */
   toggleFilter() {
     this.change(() => {
