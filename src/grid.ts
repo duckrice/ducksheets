@@ -8,6 +8,7 @@ import { CellError, MAX_COLS, MAX_ROWS, colName, inRange, key, mergeAt, type Ran
 import { formatValue } from "./numfmt";
 import { lookOf, type BorderSide } from "./xlsx/styles";
 import { conditionalEffects, readDxf, type CfEffect } from "./conditional";
+import { tableLook } from "./structured";
 
 const HEADER_H = 22;
 const MIN_HEADER_W = 42;
@@ -358,9 +359,10 @@ export class Grid {
     for (const r of visibleRows)
       for (const c of visibleCols) {
         const cell = sheet.cells.get(key(r, c));
-        if (!cell) continue;
+        const inTable = sheet.tables.length ? tableLook(sheet, r, c) : null;
+        if (!cell && !inTable) continue;
         const effect = effects.get(key(r, c));
-        const fill = effect?.fill ?? (cell.s ? lookOf(styles, cell.s).fill : null);
+        const fill = effect?.fill ?? (cell?.s ? lookOf(styles, cell.s).fill : null) ?? inTable?.fill;
         if (fill) {
           ctx.fillStyle = fill;
           ctx.fillRect(this.x(c), this.y(r), this.cols.size(c), this.rows.size(r));
@@ -512,7 +514,10 @@ export class Grid {
     const effect = this.effects.get(key(r, c));
     // Links show blue and underlined, as Excel's Hyperlink style.
     const linked = sheet.links.has(key(r, c)) || (!!cell?.f && /^\s*HYPERLINK\s*\(/i.test(cell.f));
-    const styled = effect ? { ...look.font, ...(effect.bold ? { bold: true } : {}), ...(effect.italic ? { italic: true } : {}) } : look.font;
+    // A table's header is white and bold, unless the cell has its own colour.
+    const inTable = sheet.tables.length ? tableLook(sheet, r, c) : null;
+    const base = inTable ? { ...look.font, bold: look.font.bold || !!inTable.bold, color: inTable.color && (!look.font.color || look.font.color === "#000000") && !look.fill ? inTable.color : look.font.color } : look.font;
+    const styled = effect ? { ...base, ...(effect.bold ? { bold: true } : {}), ...(effect.italic ? { italic: true } : {}) } : base;
     const font = linked ? { ...styled, underline: true, color: styled.color && styled.color !== "#000000" ? styled.color : "#0563C1" } : styled;
     if (linked && !effect?.color) shown.color = font.color;
     if (effect?.color) shown.color = effect.color;

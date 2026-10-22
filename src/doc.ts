@@ -3,9 +3,10 @@
 // never changed in place, so the copies are cheap), and undo puts them back.
 
 import { Calculator } from "./calc";
-import { afterInsertDelete, mapRefs, quoteSheet, parse, print, renamedSheet, shifted, type Node } from "./formula/parse";
+import { afterInsertDelete, mapRefs, quoteSheet, parse, print, renamedColumn, renamedSheet, shifted, type Node } from "./formula/parse";
+import { columnNames } from "./xlsx/tables";
 import { compare } from "./formula/eval";
-import { MAX_COLS, MAX_ROWS, colName, colOf, inRange, key, newSheet, rowOf, type Cell, type Range, type Scalar, type Sheet, type Workbook } from "./model";
+import { MAX_COLS, MAX_ROWS, colName, colOf, inRange, key, newSheet, rowOf, type Cell, type Range, type Scalar, type Sheet, type SheetTable, type Workbook } from "./model";
 import { editText, formatValue, isDateFormat, locale, parseInput } from "./numfmt";
 import { defaultStyles, lookOf, withStyle, type StyleChange } from "./xlsx/styles";
 import { dxfXml, withoutRules, type CfRule, type CfStyle } from "./conditional";
@@ -46,6 +47,7 @@ function cloneSheet(s: Sheet): Sheet {
     validations: [...s.validations],
     notes: new Map(s.notes),
     links: new Map(s.links),
+    tables: s.tables.map((t) => ({ ...t, range: { ...t.range } })),
   };
 }
 
@@ -208,8 +210,28 @@ export class Doc {
 
   setInput(r: number, c: number, text: string) {
     this.change(() => {
+      const table = this.sheet.tables.find((t) => t.range.r1 === r && c >= t.range.c1 && c <= t.range.c2 && !/headerRowCount="0"/.test(t.xml ?? ""));
+      const before = table && columnNames(this.sheet, table)[c - table.range.c1];
       this.put(this.sheet, r, c, text);
       this.widen(c, c, r, r);
+      // Renaming a table's column renames it in the formulas that use it, as in Excel.
+      const after = table && columnNames(this.sheet, table)[c - table.range.c1];
+      if (table && before && after && before !== after) this.renameColumn(table, before, after);
+    });
+  }
+
+  private renameColumn(table: SheetTable, from: string, to: string) {
+    this.book.sheets.forEach((sheet, i) => {
+      for (const [k, cell] of sheet.cells) {
+        if (cell.f === undefined || !cell.f.includes("[")) continue;
+        const here = i === this.active && inRange(table.range, rowOf(k), colOf(k));
+        try {
+          const next = print(renamedColumn(parse(cell.f), table.name, from, to, here));
+          if (next !== cell.f) sheet.cells.set(k, { ...cell, f: next });
+        } catch {
+          // A formula that can't be read is left as it is.
+        }
+      }
     });
   }
 
@@ -506,6 +528,10 @@ export class Doc {
       sheet.merges = sheet.merges.map(shiftRange).filter((m): m is Range => !!m && (m.r1 !== m.r2 || m.c1 !== m.c2));
       sheet.conditional = sheet.conditional.map((b) => ({ ...b, ranges: b.ranges.map(shiftRange).filter((g): g is Range => !!g) })).filter((b) => b.ranges.length);
       sheet.validations = sheet.validations.map((v) => ({ ...v, ranges: v.ranges.map(shiftRange).filter((g): g is Range => !!g) })).filter((v) => v.ranges.length);
+      sheet.tables = sheet.tables.flatMap((t) => {
+        const range = shiftRange(t.range);
+        return range ? [{ ...t, range }] : [];
+      });
       if (sheet.filter) {
         const range = shiftRange(sheet.filter.range);
         sheet.filter = range ? { ...sheet.filter, range } : null;
@@ -794,8 +820,11 @@ export class Doc {
    * Format as table, as Excel's quick styles: a coloured header row in white bold, rows striped in
    * a light shade, thin lines, and filter buttons on the header.
    */
-  formatAsTable(range: Range, header: string, band: string) {
+  formatAsTable(range: Range, header: string, band: string, style = "TableStyleMedium2") {
     const last = Math.min(range.r2, this.lastRow(range));
+    // An Excel table needs a header row of names, and no other table in the way.
+    const block = { ...range, r2: Math.max(last, range.r1 + 1) };
+    const overlaps = (t: { range: Range }) => !(t.range.r2 < block.r1 || t.range.r1 > block.r2 || t.range.c2 < block.c1 || t.range.c1 > block.c2);
     const line = { style: "thin", color: header };
     this.format({ ...range, r2: last }, (_s, r) =>
       r === range.r1
@@ -803,7 +832,17 @@ export class Doc {
         : { fill: (r - range.r1) % 2 === 1 ? band : null, border: { bottom: { style: "thin", color: band } } },
     );
     this.change(() => {
-      this.sheet.filter = { range: { ...range, r2: last }, shown: new Map() };
+      const sheet = this.sheet;
+      for (let c = block.c1; c <= block.c2; c++) {
+        const v = this.value(block.r1, c);
+        if (v === null || v === "") this.put(sheet, block.r1, c, `Column${c - block.c1 + 1}`);
+        else if (typeof v !== "string") this.put(sheet, block.r1, c, `'${this.shown(block.r1, c)}`);
+      }
+      const taken = new Set(this.book.sheets.flatMap((s) => s.tables.map((t) => t.name.toLowerCase())));
+      let n = 1;
+      while (taken.has(`table${n}`) || this.book.names.has(`TABLE${n}`)) n++;
+      sheet.tables = [...sheet.tables.filter((t) => !overlaps(t)), { name: `Table${n}`, range: block, style }];
+      sheet.filter = { range: block, shown: new Map() };
     });
   }
 

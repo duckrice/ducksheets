@@ -13,6 +13,8 @@ import { ARRAY_FUNCTIONS } from "../calc";
 import { readValidations } from "../validation";
 import { readNotes } from "./notes";
 import { readLinks } from "./links";
+import { readTables } from "./tables";
+import { totalsRows } from "../structured";
 
 const MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
 
@@ -94,7 +96,12 @@ export async function readXlsx(bytes: Uint8Array): Promise<Workbook> {
     sheet.origin = { path: rel.path, xml: text };
     await readCharts(zip, sheet);
     sheet.notes = await readNotes(zip, rel.path);
-    sheet.links = await readLinks(zip, rel.path, new DOMParser().parseFromString(text, "application/xml").documentElement);
+    const ws = new DOMParser().parseFromString(text, "application/xml").documentElement;
+    sheet.links = await readLinks(zip, rel.path, ws);
+    sheet.tables = await readTables(zip, rel.path, ws);
+    // A table's filter buttons are the sheet's filter here.
+    const filtered = sheet.tables.find((t) => /<(\w+:)?autoFilter\b/.test(t.xml ?? ""));
+    if (!sheet.filter && filtered) sheet.filter = { range: { ...filtered.range, r2: filtered.range.r2 - totalsRows(filtered) }, shown: new Map() };
     book.sheets.push(sheet);
   }
   if (!book.sheets.length) throw new NotAWorkbook("This workbook has no sheets DuckSheets can show.");

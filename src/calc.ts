@@ -5,6 +5,7 @@
 
 import "./formula/functions";
 import { ArrayValue, evaluate, scalar, type EvalContext } from "./formula/eval";
+import { resolveTable } from "./structured";
 import { FormulaError, parse, type Node } from "./formula/parse";
 import { CellError, address, colOf, key, rowOf, type Range, type Scalar, type Workbook } from "./model";
 
@@ -174,6 +175,10 @@ export class Calculator {
         return e;
       },
       name: (name) => this.book.names.get(name),
+      table: (name, spec) => {
+        const at = resolveTable(this.book, name, spec, { sheet, row, col });
+        return at && { sheet: at.sheet, ...at.range };
+      },
       date1904: this.book.date1904,
     };
   }

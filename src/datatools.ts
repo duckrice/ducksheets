@@ -91,13 +91,13 @@ function summarize(doc: Doc) {
   );
 }
 
-/** Excel's table colours: the header's, and the light one for every other row. */
-const TABLE_STYLES: [string, string, string][] = [
-  ["Blue", "#4472C4", "#D9E1F2"],
-  ["Orange", "#ED7D31", "#FCE4D6"],
-  ["Green", "#70AD47", "#E2EFDA"],
-  ["Grey", "#7F7F7F", "#EDEDED"],
-  ["Gold", "#BF8F00", "#FFF2CC"],
+/** Excel's table colours: the header's, the light one for every other row, and its own style of that colour. */
+const TABLE_STYLES: [string, string, string, string][] = [
+  ["Blue", "#4472C4", "#D9E1F2", "TableStyleMedium2"],
+  ["Orange", "#ED7D31", "#FCE4D6", "TableStyleMedium3"],
+  ["Green", "#70AD47", "#E2EFDA", "TableStyleMedium7"],
+  ["Grey", "#7F7F7F", "#EDEDED", "TableStyleMedium4"],
+  ["Gold", "#BF8F00", "#FFF2CC", "TableStyleMedium5"],
 ];
 
 /** Goal Seek: asks which formula should give what, by changing which cell. */
@@ -126,7 +126,7 @@ export function dataMenu(doc: Doc): MenuItem[] {
   return [
     {
       label: "Format as table",
-      items: TABLE_STYLES.map(([label, header, band]) => ({ label, action: () => doc.formatAsTable(block(doc), header, band) })),
+      items: TABLE_STYLES.map(([label, header, band, style]) => ({ label, action: () => doc.formatAsTable(block(doc), header, band, style) })),
     },
     { label: "Summarize (PivotTable)…", action: () => summarize(doc) },
     { label: "Goal seek…", action: () => goalSeek(doc) },

@@ -23,6 +23,8 @@ export type Node =
   /** whole: "cols" for A:C, "rows" for 1:3. */
   | { t: "range"; sheet?: string; a: CellRef; b: CellRef; whole?: "cols" | "rows" }
   | { t: "name"; name: string }
+  /** A table reference: Sales[Amount], Sales[#All], [@Amount]; `spec` is the brackets as written. */
+  | { t: "table"; table: string; spec: string }
   | { t: "fn"; name: string; args: Node[] }
   | { t: "un"; op: "-" | "+"; e: Node }
   | { t: "pct"; e: Node }
@@ -38,6 +40,7 @@ type Token =
   | { k: "str"; v: string }
   | { k: "err"; v: string }
   | { k: "word"; v: string; sheet?: string }
+  | { k: "table"; v: string; spec: string }
   | { k: "op"; v: string }
   | { k: "("; } | { k: ")"; } | { k: "sep" } | { k: "end" };
 
@@ -102,6 +105,11 @@ function tokens(text: string): Token[] {
       if (!ref) throw new FormulaError("Expected a cell after the sheet name");
       out.push({ k: "word", v: ref[0], sheet: name });
       i += ref[0].length;
+    } else if (ch === "[") {
+      // [@Amount] inside a table: a reference to the table the formula is in.
+      const spec = brackets(text, i);
+      out.push({ k: "table", v: "", spec });
+      i += spec.length;
     } else if ((m = /^\$?\d+:\$?\d+/.exec(rest))) {
       out.push({ k: "word", v: m[0] });
       i += m[0].length;
@@ -115,6 +123,12 @@ function tokens(text: string): Token[] {
         if (!ref) throw new FormulaError("Expected a cell after the sheet name");
         out.push({ k: "word", v: ref[0], sheet: word });
         i += ref[0].length;
+        continue;
+      }
+      if (text[i] === "[" && !word.includes(":")) {
+        const spec = brackets(text, i);
+        out.push({ k: "table", v: word, spec });
+        i += spec.length;
         continue;
       }
       // A function name ending in a range-like bit (LOG10) is still a function.
@@ -135,6 +149,17 @@ function tokens(text: string): Token[] {
   }
   out.push({ k: "end" });
   return out;
+}
+
+/** The brackets of a table reference starting at `start`, nested ones included; ' escapes the next character. */
+function brackets(text: string, start: number): string {
+  let depth = 0;
+  for (let i = start; i < text.length; i++) {
+    if (text[i] === "'") i++;
+    else if (text[i] === "[") depth++;
+    else if (text[i] === "]" && --depth === 0) return text.slice(start, i + 1);
+  }
+  throw new FormulaError("A [ isn't closed");
 }
 
 const CELL = /^(\$?)([A-Za-z]{1,3})(\$?)(\d{1,7})$/;
@@ -199,6 +224,8 @@ export function parse(text: string): Node {
         if (next().k !== ")") throw new FormulaError("A bracket isn't closed");
         return { t: "paren", e };
       }
+      case "table":
+        return { t: "table", table: tok.v, spec: tok.spec };
       case "op":
         if (tok.v === "-" || tok.v === "+") return { t: "un", op: tok.v, e: expr(UNARY) };
         throw new FormulaError(`Unexpected ${tok.v}`);
@@ -293,6 +320,8 @@ export function print(node: Node, forFile = false, params?: Set<string>): string
       if (node.whole === "rows") return `${prefix}${node.a.ar ? "$" : ""}${node.a.r + 1}:${node.b.ar ? "$" : ""}${node.b.r + 1}`;
       return `${prefix}${refText(node.a)}:${refText(node.b)}`;
     }
+    case "table":
+      return `${node.table}${node.spec}`;
     case "name":
       // In files, LET's names are written _xlpm.name.
       return forFile && params?.has(node.name.toUpperCase()) ? `_xlpm.${node.name}` : node.name;
@@ -395,6 +424,29 @@ export function afterInsertDelete(node: Node, home: string, target: string, axis
     }
     return { ...ref, a: { ...ref.a, [axis]: lo }, b: { ...ref.b, [axis]: hi } };
   });
+}
+
+/** The formula with a table's column renamed, in references to that table (or to "this table" when `here`). */
+export function renamedColumn(node: Node, table: string, from: string, to: string, here: boolean): Node {
+  const escape = (name: string) => name.replace(/['#[\]@]/g, "'/** The formula with a sheet renamed (references to it carry the new name). */");
+  const swap = (spec: string) => spec.replace(/(\[@?|@)((?:'.|[^\]'])+)(?=\])/g, (all, open: string, name: string) => (name.replace(/'(.)/g, "$1").toLowerCase() === from.toLowerCase() ? `${open}${escape(to)}` : all));
+  const walk = (n: Node): Node => {
+    switch (n.t) {
+      case "table":
+        return n.table.toLowerCase() === table.toLowerCase() || (n.table === "" && here) ? { ...n, spec: swap(n.spec) } : n;
+      case "fn":
+        return { ...n, args: n.args.map(walk) };
+      case "un":
+      case "pct":
+      case "paren":
+        return { ...n, e: walk(n.e) };
+      case "bin":
+        return { ...n, l: walk(n.l), r: walk(n.r) };
+      default:
+        return n;
+    }
+  };
+  return walk(node);
 }
 
 /** The formula with a sheet renamed (references to it carry the new name). */

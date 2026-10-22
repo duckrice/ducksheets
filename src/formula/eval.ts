@@ -54,6 +54,8 @@ export interface EvalContext {
   arrays?: boolean;
   /** Names given with LET, by name in capitals. */
   local?: Map<string, Value>;
+  /** Where a table reference points, or null if nowhere. */
+  table?(name: string, spec: string): { sheet: number; r1: number; c1: number; r2: number; c2: number } | null;
 }
 
 export const err = (code: CellError["code"]) => new CellError(code);
@@ -86,6 +88,10 @@ export function evaluate(node: Node, ctx: EvalContext): Value {
       if (r2 === MAX_ROWS - 1) r2 = Math.max(Math.min(node.a.r, node.b.r), extent.rows - 1);
       if (c2 === MAX_COLS - 1) c2 = Math.max(Math.min(node.a.c, node.b.c), extent.cols - 1);
       return new RangeValue(sheet, Math.min(node.a.r, node.b.r), Math.min(node.a.c, node.b.c), r2, c2);
+    }
+    case "table": {
+      const at = ctx.table?.(node.table, node.spec);
+      return at ? new RangeValue(at.sheet, at.r1, at.c1, at.r2, at.c2) : err("#REF!");
     }
     case "name": {
       if (!node.name) return null; // a missing argument

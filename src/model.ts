@@ -63,6 +63,16 @@ export interface Chart {
   at: { r: number; c: number; dx: number; dy: number; w: number; h: number };
 }
 
+/** An Excel table: a named block of cells with a header row and a style. */
+export interface SheetTable {
+  name: string;
+  range: Range;
+  /** Excel's style name, such as TableStyleMedium2. */
+  style: string;
+  /** The table's part as read from a file, kept for what DuckSheets doesn't edit. */
+  xml?: string;
+}
+
 export interface Sheet {
   name: string;
   cells: Map<number, Cell>;
@@ -84,6 +94,7 @@ export interface Sheet {
   notes: Map<number, Note>;
   /** Links on cells: a web or e-mail address, or "#Sheet2!A1" for a place in the workbook. */
   links: Map<number, string>;
+  tables: SheetTable[];
   defaultColWidth: number;
   defaultRowHeight: number;
   /** For a sheet read from an .xlsx file: its part in the file and its XML, so what isn't edited here is kept. */
@@ -122,6 +133,7 @@ export function newSheet(name: string): Sheet {
     validations: [],
     notes: new Map(),
     links: new Map(),
+    tables: [],
     defaultColWidth: 64,
     defaultRowHeight: 20,
   };

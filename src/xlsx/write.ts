@@ -6,7 +6,7 @@
 import JSZip from "jszip";
 import type { Calculator } from "../calc";
 import { parse, print } from "../formula/parse";
-import { CellError, address, colOf, key, rangeAddress, rowOf, usedRange, type Scalar, type Sheet, type Workbook } from "../model";
+import { CellError, address, colOf, key, rangeAddress, rowOf, usedRange, type Range, type Scalar, type Sheet, type SheetTable, type Workbook } from "../model";
 import { formatValue } from "../numfmt";
 import { pxToWidth, readRels, relsPath, resolvePath } from "./read";
 import { lookOf, writeStyles } from "./styles";
@@ -17,6 +17,8 @@ import { ARRAY_FUNCTIONS } from "../calc";
 import { validationsXml } from "../validation";
 import { writeNotes } from "./notes";
 import { writeLinks } from "./links";
+import { writeTables } from "./tables";
+import { totalsRows } from "../structured";
 
 const MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
 const REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
@@ -185,7 +187,10 @@ function filterXml(sheet: Sheet): string | null {
   return `<autoFilter ref="${rangeAddress(sheet.filter.range)}">${columns.join("")}</autoFilter>`;
 }
 
-function sheetXml(sheet: Sheet, index: number, calc: Calculator, strings: SharedStrings, selected: boolean, drawing: string | null, legacy: string | null | undefined, links: string | null): string {
+/** Whether the sheet's filter is the table's own: on its rows, above any totals. */
+const sameRange = (a: Range, t: SheetTable) => a.r1 === t.range.r1 && a.c1 === t.range.c1 && a.r2 === t.range.r2 - totalsRows(t) && a.c2 === t.range.c2;
+
+function sheetXml(sheet: Sheet, index: number, calc: Calculator, strings: SharedStrings, selected: boolean, drawing: string | null, legacy: string | null | undefined, links: string | null, tables: string | null | undefined): string {
   const used = usedRange(sheet);
   const doc = xml(sheet.origin?.xml ?? `<worksheet xmlns="${MAIN}" xmlns:r="${REL}"><sheetData/><pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/></worksheet>`);
   setPart(doc, "dimension", `<dimension ref="${used ? rangeAddress(used) : "A1"}"/>`);
@@ -202,7 +207,9 @@ function sheetXml(sheet: Sheet, index: number, calc: Calculator, strings: Shared
   if (!format) setPart(doc, "sheetFormatPr", `<sheetFormatPr defaultRowHeight="${Math.round(sheet.defaultRowHeight * 0.75 * 100) / 100}"/>`);
   setPart(doc, "cols", colsXml(sheet));
   setPart(doc, "sheetData", sheetDataXml(sheet, index, calc, strings));
-  setPart(doc, "autoFilter", filterXml(sheet));
+  // A table's filter is written in the table; Excel won't have it twice.
+  setPart(doc, "autoFilter", sheet.tables.some((t) => sheet.filter && sameRange(sheet.filter.range, t)) ? null : filterXml(sheet));
+  if (tables !== undefined) setPart(doc, "tableParts", tables);
   // A drawing (for charts) the sheet didn't have before.
   if (drawing && !Array.from(doc.documentElement.children).some((el) => el.localName === "drawing")) setPart(doc, "drawing", `<drawing r:id="${drawing}"/>`);
   setPart(doc, "conditionalFormatting", conditionalXml(sheet.conditional));
@@ -373,6 +380,7 @@ export async function writeXlsx(book: Workbook, calc: Calculator, active = 0): P
   const used = new Set(book.sheets.map((s) => s.origin?.path).filter(Boolean));
   let n = 1;
   const sheetEls: string[] = [];
+  let tableId = 1;
   const keepPaths = new Set<string>();
   for (const [i, sheet] of book.sheets.entries()) {
     let path = sheet.origin?.path;
@@ -385,7 +393,8 @@ export async function writeXlsx(book: Workbook, calc: Calculator, active = 0): P
     const drawing = await writeDrawing(zip, book, calc, i, path, override);
     const legacy = await writeNotes(zip, sheet, path, override);
     const links = await writeLinks(zip, sheet, path);
-    zip.file(path, sheetXml(sheet, i, calc, strings, i === active, drawing, legacy, links));
+    const tables = await writeTables(zip, sheet, path, override, () => tableId++, (t) => (sheet.filter && sameRange(sheet.filter.range, t) ? filterXml(sheet) : null));
+    zip.file(path, sheetXml(sheet, i, calc, strings, i === active, drawing, legacy, links, tables));
     override(path, CONTENT.sheet);
     const id = addRel(TYPE.sheet, path);
     sheetEls.push(`<sheet name="${esc(sheet.name)}" sheetId="${i + 1}" r:id="${id}"/>`);
