@@ -76,6 +76,8 @@ export interface GridHooks {
   follow(r: number, c: number): void;
   contextMenu(x: number, y: number, on: "cell" | "row" | "col"): void;
   filterMenu(col: number, x: number, y: number): void;
+  /** Two fingers pinched the sheet bigger or smaller. */
+  zoom(zoom: number): void;
 }
 
 type Drag =
@@ -131,6 +133,7 @@ export class Grid {
     this.scroller.addEventListener("pointerdown", (e) => this.down(e));
     this.scroller.addEventListener("pointermove", (e) => this.move(e));
     this.scroller.addEventListener("pointerup", (e) => this.up(e));
+    this.scroller.addEventListener("pointercancel", (e) => this.fingers.has(e.pointerId) && this.fingerUp(e));
     this.scroller.addEventListener("dblclick", (e) => this.doubleClick(e));
     this.scroller.addEventListener("contextmenu", (e) => this.context(e));
     this.refresh();
@@ -820,8 +823,91 @@ export class Grid {
 
   /** When the mouse button went down, to tell a click from a hold. */
   private downAt = 0;
+  /** Fingers on the sheet: one drags it along (a tap selects), two pinch to zoom. */
+  private fingers = new Map<number, { x: number; y: number }>();
+  private pan: { x: number; y: number; top: number; left: number; moved: boolean; vx: number; vy: number; t: number } | null = null;
+  private pinch: { distance: number; zoom: number } | null = null;
+  private glide = 0;
+
+  private spread() {
+    const [a, b] = [...this.fingers.values()];
+    return Math.hypot(a.x - b.x, a.y - b.y) || 1;
+  }
+
+  private fingerDown(e: PointerEvent) {
+    cancelAnimationFrame(this.glide);
+    this.fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    this.scroller.setPointerCapture(e.pointerId);
+    e.preventDefault();
+    if (this.fingers.size === 2) {
+      this.pan = null;
+      this.pinch = { distance: this.spread(), zoom: this.zoom };
+    } else if (this.fingers.size === 1) {
+      this.pan = { x: e.clientX, y: e.clientY, top: this.scroller.scrollTop, left: this.scroller.scrollLeft, moved: false, vx: 0, vy: 0, t: e.timeStamp };
+    }
+  }
+
+  private fingerMove(e: PointerEvent) {
+    const last = this.fingers.get(e.pointerId)!;
+    this.fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (this.pinch && this.fingers.size === 2) {
+      this.hooks.zoom(this.pinch.zoom * (this.spread() / this.pinch.distance));
+      return;
+    }
+    const pan = this.pan;
+    if (!pan) return;
+    if (Math.hypot(e.clientX - pan.x, e.clientY - pan.y) > 8) pan.moved = true;
+    if (!pan.moved) return;
+    this.scroller.scrollTop = pan.top - (e.clientY - pan.y);
+    this.scroller.scrollLeft = pan.left - (e.clientX - pan.x);
+    // How fast the finger went at the end, to let the sheet glide on after it lets go.
+    const dt = Math.max(1, e.timeStamp - pan.t);
+    pan.vx = 0.8 * ((last.x - e.clientX) / dt) + 0.2 * pan.vx;
+    pan.vy = 0.8 * ((last.y - e.clientY) / dt) + 0.2 * pan.vy;
+    pan.t = e.timeStamp;
+  }
+
+  private fingerUp(e: PointerEvent) {
+    this.fingers.delete(e.pointerId);
+    if (this.scroller.hasPointerCapture(e.pointerId)) this.scroller.releasePointerCapture(e.pointerId);
+    const pan = this.pan;
+    if (this.pinch) {
+      if (this.fingers.size < 2) this.pinch = null;
+      return;
+    }
+    this.pan = null;
+    if (!pan || e.type === "pointercancel") return;
+    if (!pan.moved) return this.tap(e);
+    let { vx, vy } = pan;
+    let t = performance.now();
+    const step = (now: number) => {
+      const dt = now - t;
+      t = now;
+      this.scroller.scrollTop += vy * dt;
+      this.scroller.scrollLeft += vx * dt;
+      vx *= Math.pow(0.995, dt);
+      vy *= Math.pow(0.995, dt);
+      if (Math.hypot(vx, vy) > 0.02) this.glide = requestAnimationFrame(step);
+    };
+    if (Math.hypot(vx, vy) > 0.1) this.glide = requestAnimationFrame(step);
+  }
+
+  /** A tap with a finger selects, as a click does. */
+  private tap(e: PointerEvent) {
+    const { x, y } = this.local(e);
+    const hit = this.hit(x, y);
+    this.el.focus({ preventScroll: true });
+    this.hooks.finishEditing();
+    if (hit.kind === "cell") {
+      const m = mergeAt(this.doc.sheet, hit.r, hit.c);
+      this.setSel(m?.r1 ?? hit.r, m?.c1 ?? hit.c);
+    } else if (hit.kind === "row") this.setSel(hit.r, 0, hit.r, MAX_COLS - 1);
+    else if (hit.kind === "col") this.setSel(0, hit.c, MAX_ROWS - 1, hit.c);
+    else if (hit.kind === "filter") this.hooks.filterMenu(hit.c, e.clientX, e.clientY);
+  }
 
   private down(e: PointerEvent) {
+    if (e.pointerType === "touch") return this.fingerDown(e);
     if (e.button !== 0) return;
     this.downAt = Date.now();
     const { x, y } = this.local(e);
@@ -879,6 +965,7 @@ export class Grid {
   }
 
   private move(e: PointerEvent) {
+    if (this.fingers.has(e.pointerId)) return this.fingerMove(e);
     const { x, y } = this.local(e);
     if (!this.drag) {
       const hit = this.hit(x, y);
@@ -930,6 +1017,7 @@ export class Grid {
   }
 
   private up(e: PointerEvent) {
+    if (this.fingers.has(e.pointerId)) return this.fingerUp(e);
     const drag = this.drag;
     this.drag = null;
     if (this.scroller.hasPointerCapture(e.pointerId)) this.scroller.releasePointerCapture(e.pointerId);

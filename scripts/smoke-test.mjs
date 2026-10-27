@@ -333,6 +333,36 @@ await session(9801, async (app) => {
   await app.wheel(gx, gy, -120, CTRL);
   check("Ctrl+wheel zooms", (await app.evaluate(`window.__ducksheets.grid.zoom`)) > 1);
 
+  // A trackpad pinch: many small Ctrl+wheel steps add up, instead of each being a whole step.
+  const zoomed = await app.evaluate(`window.__ducksheets.grid.zoom`);
+  for (let i = 0; i < 10; i++) await app.wheel(gx, gy, -4, CTRL);
+  const pinchedTo = await app.evaluate(`window.__ducksheets.grid.zoom`);
+  check("a trackpad pinch zooms smoothly", pinchedTo > zoomed && pinchedTo < zoomed * 1.1, `${zoomed} → ${pinchedTo}`);
+
+  // Fingers: a drag scrolls the sheet, a tap selects a cell, two fingers pinch to zoom.
+  const touch = (type, points) => app.send("Input.dispatchTouchEvent", { type, touchPoints: points.map(([x, y], id) => ({ x, y, id })) });
+  const [fx, fy] = await s.at(12, 3);
+  const before = await app.evaluate(`document.querySelector(".grid-scroller").scrollTop`);
+  await touch("touchStart", [[fx, fy]]);
+  for (let i = 1; i <= 10; i++) await touch("touchMove", [[fx, fy - i * 20]]);
+  await touch("touchEnd", []);
+  await sleep(600);
+  const after = await app.evaluate(`document.querySelector(".grid-scroller").scrollTop`);
+  check("dragging a finger scrolls the sheet, and doesn't select", after > before + 150 && JSON.stringify((await s.sel()).slice(0, 2)) !== "[12,3]", `${before} → ${after}`);
+  await app.evaluate(`document.querySelector(".grid-scroller").scrollTop = 0`);
+  await sleep(200);
+  const [tapX, tapY] = await s.at(6, 2);
+  await touch("touchStart", [[tapX, tapY]]);
+  await touch("touchEnd", []);
+  check("a tap selects the cell", JSON.stringify((await s.sel()).slice(0, 2)) === "[6,2]", JSON.stringify(await s.sel()));
+  const z0 = await app.evaluate(`window.__ducksheets.grid.zoom`);
+  await touch("touchStart", [[tapX - 40, tapY], [tapX + 40, tapY]]);
+  for (let i = 1; i <= 5; i++) await touch("touchMove", [[tapX - 40 - i * 12, tapY], [tapX + 40 + i * 12, tapY]]);
+  await touch("touchEnd", []);
+  const z1 = await app.evaluate(`window.__ducksheets.grid.zoom`);
+  check("two fingers pinch to zoom", z1 > z0 * 1.5, `${z0} → ${z1}`);
+  await app.evaluate(`window.__ducksheets.grid.setZoom(${zoomed})`);
+
   // A chart of the list.
   await app.evaluate(`(() => { const d = window.__ducksheets.doc; d.sel = { r: 0, c: 0, ar: 2, ac: 1 }; d.emit(); })()`);
   await app.clickOn(`.tb[title^="Insert a chart"]`);

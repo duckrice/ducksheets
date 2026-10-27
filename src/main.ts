@@ -53,6 +53,7 @@ function mount(next: Doc) {
     },
     contextMenu: (x, y, on) => contextMenu(x, y, on),
     filterMenu: (col, x, y) => filterMenu(col, x, y),
+    zoom: (z) => zoom(z),
   });
   editor = new Editor(doc, grid, {
     commit: (r, c, text, move, everywhere) => {
@@ -508,10 +509,17 @@ function keydown(e: KeyboardEvent) {
   }
 }
 
+/** Ctrl+wheel steps not yet big enough to show: a trackpad pinch sends many tiny ones. */
+let pinched = 1;
+
 function wheel(e: WheelEvent) {
   if (e.ctrlKey) {
     e.preventDefault();
-    zoom(grid.zoom * (e.deltaY < 0 ? 1.1 : 1 / 1.1));
+    // About 10 % per notch of a mouse wheel, as in Excel, and in proportion for a trackpad's pinch.
+    pinched *= Math.pow(1.1, -(e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY) / 100);
+    if (Math.abs(pinched - 1) < 0.01) return;
+    zoom(grid.zoom * pinched);
+    pinched = 1;
   } else if (e.altKey) {
     // Alt+scroll wheel makes the selected cells' text a size bigger or smaller.
     e.preventDefault();
