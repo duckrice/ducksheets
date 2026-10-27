@@ -123,6 +123,8 @@ export interface SheetTable {
 
 export interface Sheet {
   name: string;
+  /** Summaries made here with Summarize (their heading cell), saved as PivotTables too. */
+  pivots?: { r: number; c: number }[];
   cells: Map<number, Cell>;
   /** Column widths and row heights in pixels, where not the default. */
   colWidths: Map<number, number>;

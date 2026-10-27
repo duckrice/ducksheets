@@ -6,7 +6,7 @@
 import JSZip from "jszip";
 import type { Calculator } from "../calc";
 import { parse, print } from "../formula/parse";
-import { CellError, address, colOf, key, rangeAddress, rowOf, usedRange, type Range, type Scalar, type Sheet, type SheetTable, type Workbook } from "../model";
+import { CellError, address, colOf, inRange, key, rangeAddress, rowOf, usedRange, type Range, type Scalar, type Sheet, type SheetTable, type Workbook } from "../model";
 import { formatValue } from "../numfmt";
 import { pxToWidth, readRels, relsPath, resolvePath } from "./read";
 import { lookOf, writeStyles } from "./styles";
@@ -19,6 +19,7 @@ import { writeNotes } from "./notes";
 import { writeLinks } from "./links";
 import { writeTables } from "./tables";
 import { totalsRows } from "../structured";
+import { PIVOT_TYPE, pivotAreas, writePivots } from "./pivots";
 
 const MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
 const REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
@@ -350,8 +351,8 @@ export async function writeXlsx(book: Workbook, calc: Calculator, active = 0): P
   const relEls = () => Array.from(relsRoot.children).filter((el) => el.localName === "Relationship");
   const target = (path: string) => (path.startsWith(dir) ? path.slice(dir.length) : `/${path}`);
   let nextRel = Math.max(0, ...relEls().map((el) => Number((el.getAttribute("Id") ?? "").replace(/\D/g, "")) || 0)) + 1;
-  const addRel = (type: string, path: string) => {
-    const existing = relEls().find((el) => el.getAttribute("Type") === type && (type !== TYPE.sheet || el.getAttribute("Target") === target(path)));
+  const addRel = (type: string, path: string, each = false) => {
+    const existing = relEls().find((el) => el.getAttribute("Type") === type && ((type !== TYPE.sheet && !each) || el.getAttribute("Target") === target(path)));
     if (existing) return existing.getAttribute("Id")!;
     const el = relsDoc.createElementNS(PKG_REL, "Relationship");
     const id = `rId${nextRel++}`;
@@ -386,6 +387,9 @@ export async function writeXlsx(book: Workbook, calc: Calculator, active = 0): P
   let n = 1;
   const sheetEls: string[] = [];
   let tableId = 1;
+  const pivotCaches: { path: string; id: number }[] = [];
+  // Cache ids go on from the ones a file already has.
+  let cacheId = Math.max(0, ...Array.from(wbDoc.getElementsByTagNameNS("*", "pivotCache")).map((el) => Number(el.getAttribute("cacheId")) || 0)) + 1;
   const keepPaths = new Set<string>();
   for (const [i, sheet] of book.sheets.entries()) {
     let path = sheet.origin?.path;
@@ -399,7 +403,13 @@ export async function writeXlsx(book: Workbook, calc: Calculator, active = 0): P
     const legacy = await writeNotes(zip, sheet, path, override);
     const links = await writeLinks(zip, sheet, path);
     const tables = await writeTables(zip, sheet, path, override, () => tableId++, (t) => (sheet.filter && sameRange(sheet.filter.range, t) ? filterXml(sheet) : null));
-    zip.file(path, sheetXml(sheet, i, calc, strings, i === active, drawing, legacy, links, tables));
+    pivotCaches.push(...(await writePivots(zip, book, calc, i, path, override, () => cacheId++)));
+    // A PivotTable's cells are values in the file; DuckSheets keeps its formulas.
+    const areas = pivotAreas(book, i);
+    const out = areas.length
+      ? { ...sheet, cells: new Map([...sheet.cells].map(([k, cell]) => [k, cell.f !== undefined && areas.some((a) => inRange(a, rowOf(k), colOf(k))) ? { s: cell.s, v: calc.value(i, rowOf(k), colOf(k)) } : cell])) }
+      : sheet;
+    zip.file(path, sheetXml(out, i, calc, strings, i === active, drawing, legacy, links, tables));
     override(path, CONTENT.sheet);
     const id = addRel(TYPE.sheet, path);
     sheetEls.push(`<sheet name="${esc(sheet.name)}" sheetId="${i + 1}" r:id="${id}"/>`);
@@ -434,6 +444,21 @@ export async function writeXlsx(book: Workbook, calc: Calculator, active = 0): P
     wb.appendChild(calcPr);
   }
   calcPr.setAttribute("fullCalcOnLoad", "1");
+  if (pivotCaches.length) {
+    let list = Array.from(wb.children).find((el) => el.localName === "pivotCaches");
+    if (!list) {
+      list = wbDoc.createElementNS(MAIN, "pivotCaches");
+      // In Excel's order: after the calculation settings and views, before the rest.
+      const after = [...Array.from(wb.children)].reverse().find((el) => ["calcPr", "oleSize", "customWorkbookViews"].includes(el.localName))!;
+      wb.insertBefore(list, after.nextSibling);
+    }
+    for (const cache of pivotCaches) {
+      const el = wbDoc.createElementNS(MAIN, "pivotCache");
+      el.setAttribute("cacheId", String(cache.id));
+      el.setAttributeNS(REL, "r:id", addRel(PIVOT_TYPE.cache, cache.path, true));
+      list.appendChild(el);
+    }
+  }
   if (book.date1904) {
     const pr = Array.from(wb.children).find((el) => el.localName === "workbookPr");
     pr?.setAttribute("date1904", "1");

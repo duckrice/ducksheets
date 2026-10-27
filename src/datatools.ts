@@ -85,7 +85,7 @@ function summarize(doc: Doc) {
   const fn = h("select", { class: "tb-input", "aria-label": "Work out" }, ...fns.map(([v, l]) => h("option", { value: v }, l))) as HTMLSelectElement;
   dialog(
     "Summarize",
-    [h("p", {}, "Makes a new sheet with each value of one column once, and the sum (or count, average, …) of another for it. It updates when the data changes."), byRow, h("label", { class: "format-row" }, "Work out ", fn), ofRow],
+    [h("p", {}, "Makes a new sheet with each value of one column once, and the sum (or count, average, …) of another for it. It updates when the data changes, and Excel opens it as a PivotTable."), byRow, h("label", { class: "format-row" }, "Work out ", fn), ofRow],
     () => doc.summarize(range, Number(by.value), Number(of.value), fn.value as SummaryFn),
     "Summarize",
   );

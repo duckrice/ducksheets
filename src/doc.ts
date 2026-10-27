@@ -596,6 +596,7 @@ export class Doc {
       let name = "Summary";
       for (let n = 2; this.book.sheets.some((s) => s !== sheet && s.name.toLowerCase() === name.toLowerCase()); n++) name = `Summary ${n}`;
       sheet.name = name;
+      sheet.pivots = [{ r: 0, c: 0 }];
       this.put(sheet, 0, 0, byName);
       this.put(sheet, 0, 1, `${fn[0].toUpperCase()}${fn.slice(1)} of ${ofName}`);
       groups.forEach((g, i) => {
