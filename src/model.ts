@@ -47,6 +47,49 @@ export interface Filter {
   range: Range;
   /** For each column of the range (by offset) with a filter: the values shown. */
   shown: Map<number, Set<string>>;
+  /** For each column with a custom filter (Excel's "Number filters" and "Text filters"): its rule. */
+  custom?: Map<number, FilterRule>;
+}
+
+/** Excel's comparisons in a custom filter; text with * and ? matches as a pattern. */
+export type FilterOp = "equal" | "notEqual" | "greaterThan" | "greaterThanOrEqual" | "lessThan" | "lessThanOrEqual";
+
+/** A custom filter, as Excel stores it: one or two conditions, or the top/bottom N (or N %). */
+export type FilterRule =
+  | { kind: "custom"; and: boolean; conditions: { op: FilterOp; val: string }[] }
+  | { kind: "top"; top: boolean; percent: boolean; count: number };
+
+/**
+ * Whether a cell passes a custom filter. `value` is the cell's value, `text` what it shows, and
+ * `column` the numbers in the whole filtered column (for top and bottom N).
+ */
+export function passesRule(rule: FilterRule, value: Scalar, text: string, column: number[]): boolean {
+  if (rule.kind === "top") {
+    if (typeof value !== "number" || !column.length) return false;
+    // shortcut: N % rounds down to whole items (at least one); Excel's own rounding not checked.
+    const n = Math.max(1, Math.min(column.length, rule.percent ? Math.floor((column.length * rule.count) / 100) : rule.count));
+    const sorted = [...column].sort((a, b) => (rule.top ? b - a : a - b));
+    return rule.top ? value >= sorted[n - 1] : value <= sorted[n - 1];
+  }
+  const one = ({ op, val }: { op: FilterOp; val: string }) => {
+    const wanted = Number(val.replace(",", "."));
+    if (val.trim() !== "" && !Number.isNaN(wanted) && typeof value === "number") {
+      const d = value - wanted;
+      return { equal: d === 0, notEqual: d !== 0, greaterThan: d > 0, greaterThanOrEqual: d >= 0, lessThan: d < 0, lessThanOrEqual: d <= 0 }[op];
+    }
+    const t = text.toLowerCase();
+    const v = val.toLowerCase();
+    if (op === "equal" || op === "notEqual") {
+      const pattern = new RegExp(`^${v.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".")}$`, "s");
+      return pattern.test(t) === (op === "equal");
+    }
+    // Greater or less than a text: blanks and numbers are left out, as in Excel.
+    if (typeof value !== "string" || value === "") return false;
+    const d = t < v ? -1 : t > v ? 1 : 0;
+    return { greaterThan: d > 0, greaterThanOrEqual: d >= 0, lessThan: d < 0, lessThanOrEqual: d <= 0 }[op];
+  };
+  const results = rule.conditions.map(one);
+  return rule.and ? results.every(Boolean) : results.some(Boolean);
 }
 
 export type ChartKind = "column" | "bar" | "line" | "area" | "pie" | "doughnut" | "scatter" | "picture";

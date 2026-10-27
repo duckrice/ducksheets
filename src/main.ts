@@ -20,6 +20,7 @@ import { baseName, onCloseRequested, onFilesOpened, openUrl, pickFile, pickSaveP
 import { offerUpdate } from "./updates";
 import { insertChart, insertPicture, renderCharts } from "./charts";
 import { formatCells } from "./formatdialog";
+import { customFilter } from "./datatools";
 import { printSheet } from "./print";
 import { pasteSpecial } from "./pastespecial";
 import { allowed, describe as describeRule, listItems, validationAt } from "./validation";
@@ -805,6 +806,7 @@ function filterMenu(col: number, x: number, y: number) {
       { class: "filter-menu" },
       h("button", { type: "button", class: "menu-item", onclick: sorter(false) }, "Sort A to Z"),
       h("button", { type: "button", class: "menu-item", onclick: sorter(true) }, "Sort Z to A"),
+      h("button", { type: "button", class: "menu-item", onclick: () => (close(), customFilter(doc, col)) }, "Custom filter…"),
       h("button", { type: "button", class: "menu-item", onclick: () => (close(), doc.setFilter(offset, null)) }, "Clear this filter"),
       search,
       h("div", { class: "filter-list" }, h("label", { class: "filter-item" }, allBox, "(Select all)"), ...boxes.map((b) => b.row)),

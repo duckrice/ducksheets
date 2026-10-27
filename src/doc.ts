@@ -6,7 +6,7 @@ import { Calculator } from "./calc";
 import { afterInsertDelete, mapRefs, quoteSheet, parse, print, renamedColumn, renamedSheet, shifted, type Node } from "./formula/parse";
 import { columnNames } from "./xlsx/tables";
 import { compare } from "./formula/eval";
-import { MAX_COLS, MAX_ROWS, colName, colOf, inRange, key, newSheet, rowOf, type Cell, type Range, type Scalar, type Sheet, type SheetTable, type Workbook } from "./model";
+import { MAX_COLS, MAX_ROWS, colName, colOf, inRange, key, newSheet, passesRule, rowOf, type Cell, type FilterRule, type Range, type Scalar, type Sheet, type SheetTable, type Workbook } from "./model";
 import { editText, formatValue, isDateFormat, locale, parseInput } from "./numfmt";
 import { defaultStyles, lookOf, withStyle, type StyleChange } from "./xlsx/styles";
 import { dxfXml, withoutRules, type CfRule, type CfStyle } from "./conditional";
@@ -41,7 +41,7 @@ function cloneSheet(s: Sheet): Sheet {
     hiddenRows: new Set(s.hiddenRows),
     merges: s.merges.map((m) => ({ ...m })),
     freeze: { ...s.freeze },
-    filter: s.filter && { range: { ...s.filter.range }, shown: new Map([...s.filter.shown].map(([k, v]) => [k, new Set(v)])) },
+    filter: s.filter && { range: { ...s.filter.range }, shown: new Map([...s.filter.shown].map(([k, v]) => [k, new Set(v)])), custom: new Map(s.filter.custom) },
     charts: [...s.charts],
     conditional: [...s.conditional],
     validations: [...s.validations],
@@ -688,18 +688,25 @@ export class Doc {
     return false;
   }
 
-  /** Sorts the rows of a range by one column; empty cells go last either way. */
-  sort(range: Range, col: number, descending: boolean, header = this.hasHeader(range)) {
+  /** Sorts the rows of a range by one column, or by several in turn; empty cells go last either way. */
+  sort(range: Range, col: number | { col: number; descending: boolean }[], descending = false, header = this.hasHeader(range)) {
+    const levels = typeof col === "number" ? [{ col, descending }] : col;
     const top = header ? range.r1 + 1 : range.r1;
-    if (top >= range.r2) return;
+    if (top >= range.r2 || !levels.length) return;
     const rows = Array.from({ length: range.r2 - top + 1 }, (_, i) => top + i);
-    const keys = new Map(rows.map((r) => [r, this.value(r, col)]));
+    const keys = new Map(rows.map((r) => [r, levels.map((l) => this.value(r, l.col))]));
     rows.sort((a, b) => {
-      const x = keys.get(a)!;
-      const y = keys.get(b)!;
-      if (x === null || y === null) return x === null ? (y === null ? 0 : 1) : -1;
-      const c = compare(x, y);
-      return descending ? -c : c;
+      for (let i = 0; i < levels.length; i++) {
+        const x = keys.get(a)![i];
+        const y = keys.get(b)![i];
+        if (x === null || y === null) {
+          if (x === y) continue;
+          return x === null ? 1 : -1;
+        }
+        const c = compare(x, y);
+        if (c) return levels[i].descending ? -c : c;
+      }
+      return 0;
     });
     this.change(() => {
       const cells = this.sheet.cells;
@@ -875,6 +882,18 @@ export class Doc {
     this.change(() => {
       if (shown) filter.shown.set(col, shown);
       else filter.shown.delete(col);
+      filter.custom?.delete(col);
+      this.applyFilter();
+    });
+  }
+
+  /** Filters column `col` (counted from the filter's first column) by a custom rule instead of a list of values. */
+  setCustomFilter(col: number, rule: FilterRule) {
+    const filter = this.sheet.filter;
+    if (!filter) return;
+    this.change(() => {
+      filter.shown.delete(col);
+      (filter.custom ??= new Map()).set(col, rule);
       this.applyFilter();
     });
   }
@@ -882,8 +901,22 @@ export class Doc {
   private applyFilter() {
     const filter = this.sheet.filter!;
     const { range } = filter;
+    const numbers = new Map<number, number[]>();
+    for (const col of filter.custom?.keys() ?? []) {
+      const list: number[] = [];
+      for (let r = range.r1 + 1; r <= range.r2; r++) {
+        const v = this.value(r, range.c1 + col);
+        if (typeof v === "number") list.push(v);
+      }
+      numbers.set(col, list);
+    }
     for (let r = range.r1 + 1; r <= range.r2; r++) {
-      const visible = [...filter.shown].every(([col, shown]) => shown.has(this.shown(r, range.c1 + col)));
+      const visible =
+        [...filter.shown].every(([col, shown]) => shown.has(this.shown(r, range.c1 + col))) &&
+        [...(filter.custom ?? [])].every(([col, rule]) => {
+          const v = this.value(r, range.c1 + col);
+          return passesRule(rule, typeof v === "object" ? null : v, this.shown(r, range.c1 + col), numbers.get(col)!);
+        });
       if (visible) this.sheet.hiddenRows.delete(r);
       else this.sheet.hiddenRows.add(r);
     }

@@ -178,12 +178,17 @@ function paneXml(sheet: Sheet): string {
 
 function filterXml(sheet: Sheet): string | null {
   if (!sheet.filter) return null;
-  const columns = [...sheet.filter.shown]
-    .sort(([a], [b]) => a - b)
-    .map(([col, shown]) => {
-      const values = [...shown].filter((v) => v !== "");
-      return `<filterColumn colId="${col}"><filters${shown.has("") ? ' blank="1"' : ""}>${values.map((v) => `<filter val="${esc(v)}"/>`).join("")}</filters></filterColumn>`;
-    });
+  const lists = [...sheet.filter.shown].map(([col, shown]): [number, string] => {
+    const values = [...shown].filter((v) => v !== "");
+    return [col, `<filters${shown.has("") ? ' blank="1"' : ""}>${values.map((v) => `<filter val="${esc(v)}"/>`).join("")}</filters>`];
+  });
+  const rules = [...(sheet.filter.custom ?? [])].map(([col, rule]): [number, string] => [
+    col,
+    rule.kind === "top"
+      ? `<top10${rule.top ? "" : ' top="0"'}${rule.percent ? ' percent="1"' : ""} val="${rule.count}"/>`
+      : `<customFilters${rule.and ? ' and="1"' : ""}>${rule.conditions.map((c) => `<customFilter${c.op === "equal" ? "" : ` operator="${c.op}"`} val="${esc(c.val)}"/>`).join("")}</customFilters>`,
+  ]);
+  const columns = [...lists, ...rules].sort(([a], [b]) => a - b).map(([col, xml]) => `<filterColumn colId="${col}">${xml}</filterColumn>`);
   return `<autoFilter ref="${rangeAddress(sheet.filter.range)}">${columns.join("")}</autoFilter>`;
 }
 

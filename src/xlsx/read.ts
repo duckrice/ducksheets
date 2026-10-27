@@ -5,7 +5,7 @@
 
 import JSZip from "jszip";
 import { FormulaError, parse, print, shifted } from "../formula/parse";
-import { CellError, MAX_COLS, MAX_ROWS, key, newSheet, parseRange, type Cell, type Range, type Scalar, type Sheet, type Workbook } from "../model";
+import { CellError, MAX_COLS, MAX_ROWS, key, newSheet, parseRange, type Cell, type FilterOp, type FilterRule, type Range, type Scalar, type Sheet, type Workbook } from "../model";
 import { readStyles, readTheme } from "./styles";
 import { readCharts } from "./charts";
 import { readConditional } from "../conditional";
@@ -245,11 +245,20 @@ export function readSheet(name: string, text: string, strings: string[], theme: 
   if (filterRange) {
     sheet.filter = { range: filterRange, shown: new Map() };
     for (const fc of kids(filter, "filterColumn")) {
+      const col = Number(fc.getAttribute("colId"));
+      const custom = kid(fc, "customFilters");
+      const top = kid(fc, "top10");
+      if (custom || top) {
+        const rule: FilterRule = top
+          ? { kind: "top", top: top.getAttribute("top") !== "0", percent: top.getAttribute("percent") === "1", count: Number(top.getAttribute("val") ?? 10) }
+          : { kind: "custom", and: custom!.getAttribute("and") === "1", conditions: kids(custom!, "customFilter").map((x) => ({ op: (x.getAttribute("operator") ?? "equal") as FilterOp, val: x.getAttribute("val") ?? "" })) };
+        (sheet.filter.custom ??= new Map()).set(col, rule);
+      }
       const filters = kid(fc, "filters");
       if (!filters) continue;
       const shown = new Set(kids(filters, "filter").map((x) => x.getAttribute("val") ?? ""));
       if (filters.getAttribute("blank") === "1") shown.add("");
-      sheet.filter.shown.set(Number(fc.getAttribute("colId")), shown);
+      sheet.filter.shown.set(col, shown);
     }
   }
   sheet.conditional = readConditional(ws, theme);

@@ -449,7 +449,7 @@ export class Grid {
       for (let c = Math.max(c0, filter.range.c1); c <= Math.min(c1, filter.range.c2); c++) {
         const bx = this.x(c) + this.cols.size(c) - 17;
         const by = this.y(filter.range.r1) + this.rows.size(filter.range.r1) - 17;
-        const active = filter.shown.has(c - filter.range.c1);
+        const active = filter.shown.has(c - filter.range.c1) || !!filter.custom?.has(c - filter.range.c1);
         ctx.fillStyle = active ? "#dcfce7" : "#f3f4f6";
         ctx.strokeStyle = active ? ACCENT : "#9aa1a9";
         ctx.lineWidth = 1;

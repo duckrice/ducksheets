@@ -2,7 +2,7 @@
 
 import { selRange, type Doc, type SummaryFn } from "./doc";
 import { h } from "./dom";
-import { address, colName, parseAddress, type Range } from "./model";
+import { address, colName, parseAddress, type FilterOp, type FilterRule, type Range } from "./model";
 import { modal, toast, type MenuItem } from "./ui";
 
 /** The selection, or (for a single cell) the block of data around it, as Excel does. */
@@ -127,8 +127,66 @@ function goalSeek(doc: Doc) {
   );
 }
 
+/** Sort by up to three columns in turn, as Excel's Sort dialog. */
+function sortDialog(doc: Doc) {
+  const range = block(doc);
+  const header = h("input", { type: "checkbox", checked: doc.hasHeader(range) }) as HTMLInputElement;
+  const columns = Array.from({ length: range.c2 - range.c1 + 1 }, (_, i) => range.c1 + i);
+  const name = (c: number) => (header.checked ? String(doc.value(range.r1, c) ?? `Column ${colName(c)}`) : `Column ${colName(c)}`);
+  const levels = ["Sort by", "Then by", "Then by"].map((label, i) => {
+    const col = h("select", { class: "tb-input", "aria-label": `${label} column` }) as HTMLSelectElement;
+    const order = h("select", { class: "tb-input", "aria-label": `${label} order` }, h("option", { value: "asc" }, "A to Z, smallest first"), h("option", { value: "desc" }, "Z to A, largest first")) as HTMLSelectElement;
+    const fill = () => {
+      const was = col.value;
+      col.replaceChildren(...(i ? [h("option", { value: "" }, "(none)")] : []), ...columns.map((c) => h("option", { value: c }, name(c))));
+      col.value = was || (i ? "" : String(doc.sel.c >= range.c1 && doc.sel.c <= range.c2 ? doc.sel.c : range.c1));
+    };
+    fill();
+    return { col, order, fill, row: h("label", { class: "format-row" }, `${label} `, col, " ", order) };
+  });
+  header.addEventListener("change", () => levels.forEach((l) => l.fill()));
+  dialog(
+    "Sort",
+    [h("label", { class: "format-row" }, header, " My data has headers"), ...levels.map((l) => l.row)],
+    () => doc.sort(range, levels.filter((l) => l.col.value !== "").map((l) => ({ col: Number(l.col.value), descending: l.order.value === "desc" })), false, header.checked),
+  );
+}
+
+/** What the custom filter dialog offers, and the condition each makes from the value typed. */
+const FILTER_CHOICES: [string, string, (v: string) => FilterRule][] = [
+  ["equal", "equals", (v) => one("equal", v)],
+  ["notEqual", "does not equal", (v) => one("notEqual", v)],
+  ["greaterThan", "is greater than", (v) => one("greaterThan", v)],
+  ["greaterThanOrEqual", "is greater than or equal to", (v) => one("greaterThanOrEqual", v)],
+  ["lessThan", "is less than", (v) => one("lessThan", v)],
+  ["lessThanOrEqual", "is less than or equal to", (v) => one("lessThanOrEqual", v)],
+  ["begins", "begins with", (v) => one("equal", `${v}*`)],
+  ["ends", "ends with", (v) => one("equal", `*${v}`)],
+  ["contains", "contains", (v) => one("equal", `*${v}*`)],
+  ["notContains", "does not contain", (v) => one("notEqual", `*${v}*`)],
+  ["top", "top (number of items)", (v) => ({ kind: "top", top: true, percent: false, count: Number(v) })],
+  ["bottom", "bottom (number of items)", (v) => ({ kind: "top", top: false, percent: false, count: Number(v) })],
+  ["topPercent", "top %", (v) => ({ kind: "top", top: true, percent: true, count: Number(v) })],
+];
+const one = (op: FilterOp, val: string): FilterRule => ({ kind: "custom", and: false, conditions: [{ op, val }] });
+
+/** Excel's "Custom filter": show the rows whose value in column `col` of the filter matches a condition. */
+export function customFilter(doc: Doc, col: number) {
+  const filter = doc.sheet.filter;
+  if (!filter) return;
+  const offset = col - filter.range.c1;
+  const how = h("select", { class: "tb-input", "aria-label": "Show rows where the value" }, ...FILTER_CHOICES.map(([v, l]) => h("option", { value: v }, l))) as HTMLSelectElement;
+  const value = h("input", { type: "text", class: "tb-input wide", "aria-label": "Value" }) as HTMLInputElement;
+  dialog("Custom filter", [h("p", {}, `Show rows where ${String(doc.value(filter.range.r1, col) ?? `column ${colName(col)}`)}`), how, value], () => {
+    const rule = FILTER_CHOICES.find(([v]) => v === how.value)![2](value.value.trim());
+    if (rule.kind === "top" && !(rule.count > 0)) return toast("Give how many, as a number.");
+    doc.setCustomFilter(offset, rule);
+  });
+}
+
 export function dataMenu(doc: Doc): MenuItem[] {
   return [
+    { label: "Sort…", action: () => sortDialog(doc) },
     { label: "Format as table", items: tableMenu(doc) },
     { label: "Summarize (PivotTable)…", action: () => summarize(doc) },
     { label: "Goal seek…", action: () => goalSeek(doc) },

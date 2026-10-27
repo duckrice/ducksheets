@@ -302,7 +302,31 @@ await session(9801, async (app) => {
   check("its button lists the values", await app.waitFor(`document.querySelectorAll(".filter-item").length >= 3`, 3000));
   await app.evaluate(`(() => { const item = [...document.querySelectorAll(".filter-item")].find((l) => l.textContent === "Food"); item.querySelector("input").click(); [...document.querySelectorAll(".filter-menu .btn")].find((b) => b.textContent === "OK").click(); })()`);
   check("unticking a value hides its rows", (await app.evaluate(`[...window.__ducksheets.doc.sheet.hiddenRows]`)).length === 1);
+  // Custom filter from the Cost button: less than 5000 shows Food, hides Rent.
+  await app.evaluate(`window.__ducksheets.doc.setFilter(0, null)`);
+  const costButton = await app.evaluate(`(() => {
+    const g = window.__ducksheets.grid;
+    const b = g.cellBox(0, 1);
+    const rect = g.el.getBoundingClientRect();
+    return [rect.left + b.x + b.w - 9, rect.top + b.y + b.h - 9];
+  })()`);
+  await app.click(costButton[0], costButton[1]);
+  await app.waitFor(`!!document.querySelector(".filter-menu")`, 3000);
+  await app.evaluate(`[...document.querySelectorAll(".filter-menu .menu-item")].find((b) => b.textContent === "Custom filter…").click()`);
+  check("Custom filter… asks for a condition", await app.waitFor(`!!document.querySelector('[aria-label="Custom filter"] select')`, 3000));
+  await app.evaluate(`(() => { const d = document.querySelector('[aria-label="Custom filter"]'); d.querySelector("select").value = "lessThan"; d.querySelector("input").value = "5000"; d.querySelector(".btn.primary").click(); })()`);
+  const hidden = await app.evaluate(`[...window.__ducksheets.doc.sheet.hiddenRows].sort().join()`);
+  check("and hides the rows that don't match", hidden.split(",").includes("1") && !hidden.split(",").includes("2"), hidden);
   await app.key("L", 76, CTRL | SHIFT);
+
+  // Sort… from Data tools: by Item, A to Z.
+  await app.evaluate(`(() => { const d = window.__ducksheets.doc; d.sel = { r: 0, c: 0, ar: 2, ac: 1 }; d.emit(); })()`);
+  await app.clickOn('.toolbar [title^="Data tools"]');
+  await app.evaluate(`[...document.querySelectorAll(".menu-item")].find((b) => b.textContent === "Sort…").click()`);
+  check("Sort… opens with the headings to choose from", await app.waitFor(`[...document.querySelectorAll('[aria-label="Sort by column"] option')].map((o) => o.textContent).join() === "Item,Cost"`, 3000));
+  await app.evaluate(`(() => { const d = document.querySelector('[role="dialog"][aria-label="Sort"]'); d.querySelector('[aria-label="Sort by column"]').value = "0"; d.querySelector(".btn.primary").click(); })()`);
+  check("and sorts by that column", (await s.value(1, 0)) === "Food" && (await s.value(2, 0)) === "Rent", `${await s.value(1, 0)}`);
+  await app.key("z", 90, CTRL);
 
   // Zoom with Ctrl+wheel.
   const [gx, gy] = await s.at(5, 5);
