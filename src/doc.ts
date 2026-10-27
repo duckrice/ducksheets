@@ -108,10 +108,18 @@ export class Doc {
     return { sheets: this.book.sheets.map(cloneSheet), names: new Map(this.book.names), active: this.active, sel: { ...this.sel } };
   }
 
-  /** Makes a change as one step that can be undone. */
+  private changing = false;
+
+  /** Makes a change as one step that can be undone. Changes made inside it join that step. */
   change(fn: () => void) {
+    if (this.changing) return fn();
     const before = this.snapshot();
-    fn();
+    this.changing = true;
+    try {
+      fn();
+    } finally {
+      this.changing = false;
+    }
     this.undoStack.push(before);
     if (this.undoStack.length > 200) this.undoStack.shift();
     this.redoStack = [];
@@ -582,8 +590,8 @@ export class Doc {
     const [byName, ofName] = [label(by), label(of)];
     const ifs = { sum: "SUMIFS", count: "COUNTIFS", average: "AVERAGEIFS", max: "MAXIFS", min: "MINIFS" }[fn];
     const total = { sum: "SUM", count: "COUNTA", average: "AVERAGE", max: "MAX", min: "MIN" }[fn];
-    this.addSheet();
     this.change(() => {
+      this.addSheet();
       const sheet = this.sheet;
       let name = "Summary";
       for (let n = 2; this.book.sheets.some((s) => s !== sheet && s.name.toLowerCase() === name.toLowerCase()); n++) name = `Summary ${n}`;
@@ -599,11 +607,11 @@ export class Doc {
       const end = groups.length + 1;
       this.put(sheet, end, 0, "Total");
       this.put(sheet, end, 1, `=${total}(${fn === "count" ? column(by) : column(of)})`);
+      const header = { bold: true, color: "#FFFFFF", fill: "#4472C4" };
+      this.format({ r1: 0, c1: 0, r2: 0, c2: 1 }, () => header);
+      this.format({ r1: end, c1: 0, r2: end, c2: 1 }, () => ({ bold: true, border: { top: { style: "thin", color: "#4472C4" } } }));
+      this.widen(0, 1, 0, end);
     });
-    const header = { bold: true, color: "#FFFFFF", fill: "#4472C4" };
-    this.format({ r1: 0, c1: 0, r2: 0, c2: 1 }, () => header);
-    this.format({ r1: groups.length + 1, c1: 0, r2: groups.length + 1, c2: 1 }, () => ({ bold: true, border: { top: { style: "thin", color: "#4472C4" } } }));
-    this.change(() => this.widen(0, 1, 0, groups.length + 1));
   }
 
   /** Renames a sheet; formulas pointing at it follow. Returns an error message if the name can't be used. */
@@ -826,12 +834,12 @@ export class Doc {
     const block = { ...range, r2: Math.max(last, range.r1 + 1) };
     const overlaps = (t: { range: Range }) => !(t.range.r2 < block.r1 || t.range.r1 > block.r2 || t.range.c2 < block.c1 || t.range.c1 > block.c2);
     const line = { style: "thin", color: header };
-    this.format({ ...range, r2: last }, (_s, r) =>
-      r === range.r1
-        ? { bold: true, color: "#FFFFFF", fill: header, border: { bottom: line } }
-        : { fill: (r - range.r1) % 2 === 1 ? band : null, border: { bottom: { style: "thin", color: band } } },
-    );
     this.change(() => {
+      this.format({ ...range, r2: last }, (_s, r) =>
+        r === range.r1
+          ? { bold: true, color: "#FFFFFF", fill: header, border: { bottom: line } }
+          : { fill: (r - range.r1) % 2 === 1 ? band : null, border: { bottom: { style: "thin", color: band } } },
+      );
       const sheet = this.sheet;
       for (let c = block.c1; c <= block.c2; c++) {
         const v = this.value(block.r1, c);

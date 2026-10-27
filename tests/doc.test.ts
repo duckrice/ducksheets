@@ -248,3 +248,20 @@ describe("summarize", () => {
     expect([doc.sheet.name, doc.value(1, 1), doc.value(4, 1)]).toEqual(["Summary 2", 2, 5]);
   });
 });
+
+describe("compound actions", () => {
+  it("undo Summarize and Format as table in one step each", () => {
+    const d = doc();
+    put(d, { A1: "Fruit", B1: "Kg", A2: "pear", B2: "2", A3: "plum", B3: "5" });
+    d.summarize({ r1: 0, c1: 0, r2: 2, c2: 1 }, 0, 1, "sum");
+    expect(d.book.sheets.length).toBe(2);
+    d.undo();
+    expect([d.book.sheets.length, d.active, d.value(0, 0)]).toEqual([1, 0, "Fruit"]);
+    d.formatAsTable({ r1: 0, c1: 0, r2: 2, c2: 1 }, "#4472C4", "#D9E1F2");
+    expect(d.sheet.tables.length).toBe(1);
+    d.undo();
+    expect([d.sheet.tables.length, d.sheet.filter, d.canUndo]).toEqual([0, null, true]);
+    d.redo();
+    expect(d.sheet.tables.length).toBe(1);
+  });
+});
