@@ -9,7 +9,7 @@ import type { Grid } from "./grid";
 import { MAX_COLS, MAX_ROWS, type Chart, type ChartKind } from "./model";
 import { chartData } from "./chartdata";
 import { formatValue } from "./numfmt";
-import { askName, menu, toast } from "./ui";
+import { askName, menu, modal, toast, type MenuItem } from "./ui";
 
 export const CHART_COLORS = ["#4472C4", "#ED7D31", "#A5A5A5", "#FFC000", "#5B9BD5", "#70AD47", "#264478", "#9E480E", "#636363", "#997300"];
 
@@ -41,6 +41,7 @@ export function drawChart(doc: Doc, chart: Chart, w: number, h: number): SVGSVGE
     return root;
   }
   root.append(svg("rect", { x: 0, y: 0, width: w, height: h, fill: "#ffffff" }));
+  const color = (i: number) => chart.colors?.[i] ?? CHART_COLORS[i % CHART_COLORS.length];
   const { categories, series, format, xs } = chartData(doc, chart, doc.active);
   const shown = (n: number) => formatValue(n, format === "General" || format === "@" ? "General" : format, doc.book.date1904).text;
   let top = 12;
@@ -60,7 +61,7 @@ export function drawChart(doc: Doc, chart: Chart, w: number, h: number): SVGSVGE
     let x = 0;
     const items = legendItems.map((name, i) => {
       const g = svg("g");
-      g.append(svg("rect", { x, y: 0, width: 9, height: 9, fill: CHART_COLORS[i % CHART_COLORS.length] }), text(x + 13, 9, name));
+      g.append(svg("rect", { x, y: 0, width: 9, height: 9, fill: color(i) }), text(x + 13, 9, name));
       x += 26 + name.length * 6.2;
       return g;
     });
@@ -68,7 +69,13 @@ export function drawChart(doc: Doc, chart: Chart, w: number, h: number): SVGSVGE
     legend.append(...items);
     root.append(legend);
   }
-  const bottom = h - 10 - legendH;
+  const bottom = h - 10 - legendH - (chart.xTitle && !round ? 18 : 0);
+  // Room on the left for the vertical axis title, and both titles drawn once the plot is placed.
+  const left = chart.yTitle && !round ? 18 : 0;
+  const axisTitles = (plot: { x: number; y: number; w: number; h: number }) => {
+    if (chart.xTitle) root.append(text(plot.x + plot.w / 2, bottom + 15, chart.xTitle, { "text-anchor": "middle", "font-weight": "bold", fill: "#595959" }));
+    if (chart.yTitle) root.append(text(0, 0, chart.yTitle, { "text-anchor": "middle", "font-weight": "bold", fill: "#595959", transform: `translate(12,${plot.y + plot.h / 2}) rotate(-90)` }));
+  };
 
   if (round) {
     const values = series[0].values.map((v) => Math.max(0, v ?? 0));
@@ -83,7 +90,7 @@ export function drawChart(doc: Doc, chart: Chart, w: number, h: number): SVGSVGE
       const large = a > Math.PI ? 1 : 0;
       const p = (t: number) => `${cx + r * Math.cos(t)},${cy + r * Math.sin(t)}`;
       const d = values.filter((x) => x > 0).length === 1 && v > 0 ? `M${cx - r},${cy}a${r},${r} 0 1,0 ${2 * r},0a${r},${r} 0 1,0 ${-2 * r},0` : `M${cx},${cy}L${p(angle)}A${r},${r} 0 ${large} 1 ${p(end)}Z`;
-      root.append(svg("path", { d, fill: CHART_COLORS[i % CHART_COLORS.length], stroke: "#ffffff", "stroke-width": 1.5 }));
+      root.append(svg("path", { d, fill: color(i), stroke: "#ffffff", "stroke-width": 1.5 }));
       if (v / total > 0.04) {
         const mid = angle + a / 2;
         const at = chart.kind === "doughnut" ? 0.75 : 0.65;
@@ -104,7 +111,7 @@ export function drawChart(doc: Doc, chart: Chart, w: number, h: number): SVGSVGE
     const sx = niceScale(Math.min(...xv), Math.max(...xv));
     const sy = niceScale(Math.min(...yv), Math.max(...yv));
     const labelW = Math.max(...[sy.lo, sy.hi].map((n) => shown(n).length)) * 6.5 + 10;
-    const plot = { x: labelW + 6, y: top, w: w - labelW - 20, h: bottom - top - 20 };
+    const plot = { x: left + labelW + 6, y: top, w: w - left - labelW - 20, h: bottom - top - 20 };
     if (plot.w < 20 || plot.h < 20) return root;
     const X = (v: number) => plot.x + ((v - sx.lo) / (sx.hi - sx.lo)) * plot.w;
     const Y = (v: number) => plot.y + plot.h - ((v - sy.lo) / (sy.hi - sy.lo)) * plot.h;
@@ -114,9 +121,10 @@ export function drawChart(doc: Doc, chart: Chart, w: number, h: number): SVGSVGE
     series.forEach((s, k) =>
       s.values.forEach((v, i) => {
         const x = xs[i];
-        if (v !== null && x !== null) root.append(svg("circle", { cx: X(x), cy: Y(v), r: 3.5, fill: CHART_COLORS[k % CHART_COLORS.length] }));
+        if (v !== null && x !== null) root.append(svg("circle", { cx: X(x), cy: Y(v), r: 3.5, fill: color(k) }));
       }),
     );
+    axisTitles(plot);
     return root;
   }
 
@@ -125,7 +133,7 @@ export function drawChart(doc: Doc, chart: Chart, w: number, h: number): SVGSVGE
   const horizontal = chart.kind === "bar";
   const labelW = Math.max(...[scale.lo, scale.hi].map((n) => shown(n).length)) * 6.5 + 10;
   const catW = horizontal ? Math.min(w * 0.3, Math.max(...categories.map((c) => c.length)) * 6.2 + 12) : 0;
-  const plot = { x: horizontal ? catW + 8 : labelW + 6, y: top, w: 0, h: 0 };
+  const plot = { x: left + (horizontal ? catW + 8 : labelW + 6), y: top, w: 0, h: 0 };
   plot.w = w - plot.x - 14;
   plot.h = bottom - top - (horizontal ? 18 : 20);
   if (plot.w < 20 || plot.h < 20) return root;
@@ -160,18 +168,18 @@ export function drawChart(doc: Doc, chart: Chart, w: number, h: number): SVGSVGE
     series.forEach((s, k) => {
       const points = s.values.map((v, i) => [plot.x + i * band + band / 2, plot.y + plot.h - pos(v ?? 0) * plot.h]);
       const d = `M${points[0][0]},${base}${points.map((p) => `L${p[0]},${p[1]}`).join("")}L${points[points.length - 1][0]},${base}Z`;
-      root.append(svg("path", { d, fill: CHART_COLORS[k % CHART_COLORS.length], "fill-opacity": 0.75, stroke: CHART_COLORS[k % CHART_COLORS.length] }));
+      root.append(svg("path", { d, fill: color(k), "fill-opacity": 0.75, stroke: color(k) }));
     });
   } else if (chart.kind === "line") {
     series.forEach((s, k) => {
-      const color = CHART_COLORS[k % CHART_COLORS.length];
+      const stroke = color(k);
       const points = s.values.map((v, i) => (v === null ? null : [plot.x + i * band + band / 2, plot.y + plot.h - pos(v) * plot.h]));
       let d = "";
       points.forEach((p, i) => {
         if (p) d += `${d && points[i - 1] ? "L" : "M"}${p[0]},${p[1]}`;
       });
-      root.append(svg("path", { d, fill: "none", stroke: color, "stroke-width": 2.25, "stroke-linejoin": "round" }));
-      for (const p of points) if (p) root.append(svg("circle", { cx: p[0], cy: p[1], r: 3, fill: color }));
+      root.append(svg("path", { d, fill: "none", stroke, "stroke-width": 2.25, "stroke-linejoin": "round" }));
+      for (const p of points) if (p) root.append(svg("circle", { cx: p[0], cy: p[1], r: 3, fill: stroke }));
     });
   } else {
     const gap = band * 0.25;
@@ -184,8 +192,8 @@ export function drawChart(doc: Doc, chart: Chart, w: number, h: number): SVGSVGE
         const along = i * band + gap + k * thick;
         root.append(
           horizontal
-            ? svg("rect", { x: plot.x + a * plot.w, y: plot.y + along, width: Math.max(0.5, (b - a) * plot.w), height: Math.max(1, thick - 1), fill: CHART_COLORS[k % CHART_COLORS.length] })
-            : svg("rect", { x: plot.x + along, y: plot.y + plot.h - b * plot.h, width: Math.max(1, thick - 1), height: Math.max(0.5, (b - a) * plot.h), fill: CHART_COLORS[k % CHART_COLORS.length] }),
+            ? svg("rect", { x: plot.x + a * plot.w, y: plot.y + along, width: Math.max(0.5, (b - a) * plot.w), height: Math.max(1, thick - 1), fill: color(k) })
+            : svg("rect", { x: plot.x + along, y: plot.y + plot.h - b * plot.h, width: Math.max(1, thick - 1), height: Math.max(0.5, (b - a) * plot.h), fill: color(k) }),
         );
       }),
     );
@@ -193,6 +201,7 @@ export function drawChart(doc: Doc, chart: Chart, w: number, h: number): SVGSVGE
   // The axis line at zero.
   if (horizontal) root.append(svg("line", { x1: plot.x + zero * plot.w, y1: plot.y, x2: plot.x + zero * plot.w, y2: plot.y + plot.h, stroke: "#bfbfbf" }));
   else root.append(svg("line", { x1: plot.x, y1: plot.y + plot.h - zero * plot.h, x2: plot.x + plot.w, y2: plot.y + plot.h - zero * plot.h, stroke: "#bfbfbf" }));
+  axisTitles(plot);
   return root;
 }
 
@@ -311,9 +320,65 @@ function chartMenu(doc: Doc, chart: Chart, anchor: HTMLElement) {
           if (title !== null) update(doc, chart.id, (c) => ({ ...c, title }));
         }),
     },
+    ...(chart.kind === "pie" || chart.kind === "doughnut"
+      ? []
+      : [
+          {
+            label: "Axis titles…",
+            action: () => axisTitles(doc, chart),
+          },
+        ]),
+    { label: "Colours", items: colourMenu(doc, chart) },
     { label: "Use the selected cells as its data", action: () => update(doc, chart.id, (c) => ({ ...c, data: selRange(doc.sel) })) },
     { label: "Delete chart", danger: true, action: () => removeChart(doc, chart.id) },
   ]);
+}
+
+/** Asks for both axis titles at once; an empty box takes that title away. */
+function axisTitles(doc: Doc, chart: Chart) {
+  const field = (label: string, value = "") => h("input", { type: "text", class: "tb-input wide", value, "aria-label": label }) as HTMLInputElement;
+  const x = field("Horizontal axis title", chart.xTitle);
+  const y = field("Vertical axis title", chart.yTitle);
+  const yes = h("button", { type: "button", class: "btn primary" }, "OK");
+  const no = h("button", { type: "button", class: "btn" }, "Cancel");
+  const done = () => {
+    close();
+    update(doc, chart.id, (c) => ({ ...c, xTitle: x.value.trim() || undefined, yTitle: y.value.trim() || undefined }));
+  };
+  const close = modal(
+    h("div", { class: "dialog", role: "dialog", "aria-label": "Axis titles" }, h("h2", {}, "Axis titles"), h("p", {}, "Horizontal axis"), x, h("p", {}, "Vertical axis"), y, h("div", { class: "dialog-buttons" }, no, yes)),
+    (event) => {
+      if (event.key === "Escape") close();
+      if (event.key === "Enter") done();
+    },
+  );
+  yes.addEventListener("click", done);
+  no.addEventListener("click", close);
+  x.focus();
+}
+
+/** Excel's palette, and a little darker and lighter of the first few, to pick a colour from. */
+const PALETTE = [...CHART_COLORS, "#C00000", "#FF0000", "#7030A0", "#00B050", "#002060", "#000000"];
+
+/** For each series (or slice of a pie): a menu of colours for it. */
+function colourMenu(doc: Doc, chart: Chart): MenuItem[] {
+  const { categories, series } = chartData(doc, chart, doc.active);
+  const names = chart.kind === "pie" || chart.kind === "doughnut" ? categories : series.map((s) => s.name);
+  const current = (i: number) => chart.colors?.[i] ?? CHART_COLORS[i % CHART_COLORS.length];
+  return names.slice(0, 20).map((name, i) => ({
+    label: name || `Series ${i + 1}`,
+    swatch: [current(i)],
+    items: PALETTE.map((hex) => ({
+      label: hex === current(i) ? "✓" : " ",
+      swatch: [hex],
+      action: () =>
+        update(doc, chart.id, (c) => {
+          const colors = names.map((_, k) => c.colors?.[k] ?? CHART_COLORS[k % CHART_COLORS.length]);
+          colors[i] = hex;
+          return { ...c, colors };
+        }),
+    })),
+  }));
 }
 
 /** A chart of the selected cells (or the block of data around the cursor), next to the data. */

@@ -100,6 +100,11 @@ export interface Chart {
   kind: ChartKind;
   data: Range;
   title: string;
+  /** Titles beside the horizontal and the vertical axis. */
+  xTitle?: string;
+  yTitle?: string;
+  /** Colours (#RRGGBB) of the series, or of the slices of a pie, in order; missing ones are Excel's. */
+  colors?: string[];
   /** For a picture (kind "picture", which moves and resizes as charts do): the image as a data URL. */
   src?: string;
   /** The cell its top-left corner is in, the offset into that cell, and its size, in pixels at 100%. */

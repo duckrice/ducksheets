@@ -341,6 +341,21 @@ await session(9801, async (app) => {
   await app.drag(chartBox[0], chartBox[1], chartBox[0] + 60, chartBox[1] + 40);
   check("a chart can be dragged to another place", await app.evaluate(`(() => { const at = window.__ducksheets.doc.sheet.charts[0].at; return at.c !== 3 || at.dx > 40; })()`), JSON.stringify(await app.evaluate(`window.__ducksheets.doc.sheet.charts[0].at`)));
 
+  // The chart's menu (right-click): a colour for its series, and axis titles.
+  const chartMenu = () => app.evaluate(`(() => { const b = document.querySelector(".chart"); const r = b.getBoundingClientRect(); b.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: r.left + 20, clientY: r.top + 20 })); })()`);
+  const pick = (label) => app.evaluate(`[...document.querySelectorAll(".menu-item")].find((b) => b.textContent.trim().startsWith(${JSON.stringify(label)})).click()`);
+  await chartMenu();
+  await app.waitFor(`!!document.querySelector(".menu")`, 2000);
+  await pick("Colours");
+  await pick("Cost");
+  await app.evaluate(`[...document.querySelectorAll(".menu-item")].find((b) => b.querySelector(".menu-swatch span")?.style.background === "rgb(192, 0, 0)").click()`);
+  check("a series can get another colour", await app.waitFor(`[...document.querySelectorAll(".chart svg rect")].some((r) => r.getAttribute("fill") === "#C00000")`, 3000));
+  await chartMenu();
+  await app.waitFor(`!!document.querySelector(".menu")`, 2000);
+  await pick("Axis titles");
+  await app.evaluate(`(() => { const d = document.querySelector('[aria-label="Axis titles"]'); d.querySelector('[aria-label="Vertical axis title"]').value = "Kroner"; d.querySelector(".btn.primary").click(); })()`);
+  check("and axis titles", await app.waitFor(`[...document.querySelectorAll(".chart svg text")].some((t) => t.textContent === "Kroner")`, 3000) && (await app.evaluate(`window.__ducksheets.doc.sheet.charts[0].xTitle === undefined`)));
+
   // Saving an .xlsx file, and opening it again.
   await app.evaluate(`window.__ducksheets.save(${JSON.stringify(saved)})`);
   check("it saves an Excel file", await app.waitFor(`document.querySelector(".status-text").textContent === "Saved budget.xlsx"`, 8000));
