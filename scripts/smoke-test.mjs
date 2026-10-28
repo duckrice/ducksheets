@@ -204,6 +204,7 @@ const saved = join(work, "budget.xlsx");
 await session(9801, async (app) => {
   const s = sheetHelpers(app);
   check("a new workbook opens, ready to type in", (await app.evaluate(`window.__ducksheets.doc.name`)) === "Book1.xlsx");
+  check("there is a Save as button beside Save", (await app.count(`.tb[title^="Save as…"]`)) === 1);
 
   // Typing moves on as in Excel: Tab to the right, Enter down (back to the first column typed in).
   await s.select(0, 0);

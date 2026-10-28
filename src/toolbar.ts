@@ -18,6 +18,7 @@ export interface ToolbarActions {
   newBook(): void;
   open(): void;
   save(): void;
+  saveAs(): void;
   autoSum(): void;
   find(): void;
   chart(): void;
@@ -234,6 +235,7 @@ export function createToolbar(doc: Doc, grid: Grid, actions: ToolbarActions) {
       button("newDoc", "New workbook (Ctrl+N)", actions.newBook),
       button("open", "Open (Ctrl+O)", actions.open),
       button("save", "Save (Ctrl+S)", actions.save),
+      button("saveAs", "Save as… another name, place or format (F12)", actions.saveAs),
       button("print", "Print, or save as PDF (Ctrl+P)", actions.print),
     ),
     h("div", { class: "tb-group" }, button("undo", "Undo (Ctrl+Z)", () => doc.undo()), button("redo", "Redo (Ctrl+Y)", () => doc.redo())),

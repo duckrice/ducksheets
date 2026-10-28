@@ -81,6 +81,7 @@ function mount(next: Doc) {
     newBook: () => void newBook(),
     open: () => void openFile(),
     save: () => void save(),
+    saveAs: () => void save(true),
     autoSum,
     find: () => findReplace(false),
     chart: () => insertChart(doc, grid),
@@ -317,6 +318,11 @@ function jump(r: number, c: number, dr: number, dc: number): [number, number] {
 // ---- keys ------------------------------------------------------------------------------------------
 
 function keydown(e: KeyboardEvent) {
+  if (e.key === "F12") {
+    e.preventDefault();
+    void save(true);
+    return;
+  }
   if (editor.active || isTyping(e.target as Element)) return;
   const mod = e.ctrlKey || e.metaKey;
   const range = selRange(doc.sel);
