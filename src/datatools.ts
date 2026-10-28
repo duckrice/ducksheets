@@ -190,6 +190,13 @@ export function dataMenu(doc: Doc): MenuItem[] {
     { label: "Format as table", items: tableMenu(doc) },
     { label: "Summarize (PivotTable)…", action: () => summarize(doc) },
     { label: "Goal seek…", action: () => goalSeek(doc) },
+    {
+      label: "Flash Fill (Ctrl+E)",
+      action: () => {
+        const filled = doc.flashFill(doc.sel.r, doc.sel.c);
+        toast(filled === null ? "Flash Fill: type a result or two next to the data first, then Ctrl+E." : `Flash Fill filled ${filled} ${filled === 1 ? "cell" : "cells"}.`);
+      },
+    },
     { label: "Remove duplicates…", action: () => removeDuplicates(doc) },
     { label: "Text to columns…", action: () => textToColumns(doc) },
   ];

@@ -453,6 +453,11 @@ function keydown(e: KeyboardEvent) {
         refreshSelection();
         return done();
       }
+      case "e": {
+        const filled = doc.flashFill(r, c);
+        toast(filled === null ? "Flash Fill: type a result or two next to the data first, then Ctrl+E." : `Flash Fill filled ${filled} ${filled === 1 ? "cell" : "cells"}.`);
+        return done();
+      }
       case "d":
         if (range.r2 > range.r1) doc.fill({ ...range, r2: range.r1 }, range);
         else if (r > 0) doc.fill({ r1: r - 1, c1: range.c1, r2: r - 1, c2: range.c2 }, { ...range, r1: r - 1 });

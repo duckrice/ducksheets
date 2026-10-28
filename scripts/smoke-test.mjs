@@ -491,6 +491,18 @@ await session(9801, async (app) => {
 
   check("no errors in the app", app.errors.length === 0, app.errors.join("; "));
 
+  // Flash Fill: one result typed next to the names, then Ctrl+E fills the rest of the column.
+  for (const [r, name] of [[90, "Kari Nordmann"], [91, "Ola Hansen"], [92, "Per Olav Berg"]]) {
+    await s.select(r, 6);
+    await s.type(name);
+  }
+  await s.select(90, 7);
+  await s.type("K. Nordmann");
+  await s.select(91, 7);
+  await app.key("e", 69, CTRL);
+  const flashed = [await s.value(91, 7), await s.value(92, 7)].join(" | ");
+  check("Ctrl+E (Flash Fill) fills the column from one example", flashed === "O. Hansen | P. Berg", flashed);
+
   // Closing with changes asks whether to save.
   await s.select(20, 0);
   await s.type("changed");

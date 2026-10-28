@@ -6,6 +6,7 @@ import { Calculator } from "./calc";
 import { afterInsertDelete, mapRefs, quoteSheet, parse, print, renamedColumn, renamedSheet, shifted, type Node } from "./formula/parse";
 import { columnNames } from "./xlsx/tables";
 import { compare } from "./formula/eval";
+import { learn, run } from "./flashfill";
 import { MAX_COLS, MAX_ROWS, colName, colOf, inRange, key, newSheet, passesRule, rowOf, type Cell, type FilterRule, type Range, type Scalar, type Sheet, type SheetTable, type Workbook } from "./model";
 import { editText, formatValue, isDateFormat, locale, parseInput } from "./numfmt";
 import { defaultStyles, lookOf, withStyle, type StyleChange } from "./xlsx/styles";
@@ -687,6 +688,36 @@ export class Doc {
       if (typeof top === "string" && below !== null && typeof below !== "string") return true;
     }
     return false;
+  }
+
+  /**
+   * Flash Fill (Ctrl+E): fills the empty cells of column `c` in the data around (r, c) from the
+   * results already typed in it, worked out from the cells beside them. One step to undo. Returns
+   * how many cells were filled, or null when no pattern explains the examples.
+   */
+  flashFill(r: number, c: number): number | null {
+    const region = this.region(r, c);
+    const top = this.hasHeader(region) ? region.r1 + 1 : region.r1;
+    const cols = Array.from({ length: region.c2 - region.c1 + 1 }, (_, i) => region.c1 + i).filter((cc) => cc !== c);
+    const inputs = (row: number) => cols.map((cc) => this.shown(row, cc));
+    let rows = Array.from({ length: region.r2 - top + 1 }, (_, i) => top + i);
+    const examplesIn = (list: number[]) => list.filter((row) => this.shown(row, c) !== "").map((row) => ({ inputs: inputs(row), output: this.shown(row, c) }));
+    let program = learn(examplesIn(rows));
+    // Headings in plain text look like any row: without the first row, then.
+    if (!program && rows.length > 2 && top === region.r1 && (program = learn(examplesIn(rows.slice(1))))) rows = rows.slice(1);
+    if (!program) return null;
+    const targets = rows.filter((row) => this.shown(row, c) === "" && inputs(row).some(Boolean));
+    let filled = 0;
+    this.change(() => {
+      for (const row of targets) {
+        const out = run(program, inputs(row));
+        if (out === null) continue;
+        // As text, as Excel's Flash Fill writes it ("15.03" stays as typed).
+        this.put(this.sheet, row, c, `'${out}`);
+        filled++;
+      }
+    });
+    return filled;
   }
 
   /** Sorts the rows of a range by one column, or by several in turn; empty cells go last either way. */
