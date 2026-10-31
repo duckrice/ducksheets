@@ -435,7 +435,12 @@ export class Doc {
   }
 
   setRowHeight(rows: number[], px: number) {
-    this.change(() => rows.forEach((r) => this.sheet.rowHeights.set(r, Math.max(0, Math.round(px)))));
+    this.change(() =>
+      rows.forEach((r) => {
+        this.sheet.rowHeights.set(r, Math.max(0, Math.round(px)));
+        this.sheet.autoRows?.delete(r);
+      }),
+    );
   }
 
   setHidden(axis: "r" | "c", indexes: number[], hidden: boolean) {
@@ -531,6 +536,7 @@ export class Doc {
       const movedHidden = new Set([...hidden].map(move).filter((i): i is number => i !== null));
       if (axis === "r") sheet.hiddenRows = movedHidden;
       else sheet.hiddenCols = movedHidden;
+      if (axis === "r" && sheet.autoRows) sheet.autoRows = new Set([...sheet.autoRows].map(move).filter((i): i is number => i !== null));
       const [lo, hi] = axis === "r" ? (["r1", "r2"] as const) : (["c1", "c2"] as const);
       const shiftRange = (m: Range): Range | null => {
         let a = m[lo];

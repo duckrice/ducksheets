@@ -73,7 +73,7 @@ export function defaultStyles(): Styles {
   };
 }
 
-const DEFAULT_THEME = ["#FFFFFF", "#000000", "#E7E6E6", "#44546A", "#4472C4", "#ED7D31", "#A5A5A5", "#FFC000", "#5B9BD5", "#70AD47", "#0563C1", "#954F72"];
+export const DEFAULT_THEME = ["#FFFFFF", "#000000", "#E7E6E6", "#44546A", "#4472C4", "#ED7D31", "#A5A5A5", "#FFC000", "#5B9BD5", "#70AD47", "#0563C1", "#954F72"];
 
 /** Excel's old 64-colour palette, for colours given by number. */
 const INDEXED = [
@@ -112,6 +112,53 @@ function tinted(hex: string, tint: number): string {
   return `#${out.map((v) => Math.round(v * 255).toString(16).padStart(2, "0")).join("").toUpperCase()}`;
 }
 
+/** A part of a cell's text with its own formatting (from a shared string's runs); unset parts follow the cell. */
+export interface TextRun {
+  text: string;
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  strike?: boolean;
+  color?: string;
+  size?: number;
+  name?: string;
+}
+const runCache = new Map<string, TextRun[]>();
+
+/** A shared string's runs (Excel's <r><rPr>…</rPr><t>…</t></r>) as text with its formatting. */
+export function textRuns(runs: string, theme: string[]): TextRun[] {
+  const cached = runCache.get(runs);
+  if (cached) return cached;
+  const si = new DOMParser().parseFromString(`<si xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">${runs}</si>`, "application/xml").documentElement;
+  const out: TextRun[] = [];
+  for (const el of Array.from(si.children)) {
+    const pick = (parent: Element | null, name: string) => (parent ? Array.from(parent.children).find((c) => c.localName === name) ?? null : null);
+    const on = (rPr: Element | null, name: string) => {
+      const e = pick(rPr, name);
+      return e ? e.getAttribute("val") !== "0" && e.getAttribute("val") !== "false" : undefined;
+    };
+    if (el.localName === "t") out.push({ text: el.textContent ?? "" });
+    if (el.localName !== "r") continue;
+    const rPr = pick(el, "rPr");
+    const run: TextRun = { text: pick(el, "t")?.textContent ?? "" };
+    const bold = on(rPr, "b"), italic = on(rPr, "i"), strike = on(rPr, "strike");
+    if (bold !== undefined) run.bold = bold;
+    if (italic !== undefined) run.italic = italic;
+    if (strike !== undefined) run.strike = strike;
+    if (pick(rPr, "u")) run.underline = pick(rPr, "u")!.getAttribute("val") !== "none";
+    const color = colorOf(pick(rPr, "color"), theme);
+    if (color) run.color = color;
+    const size = pick(rPr, "sz")?.getAttribute("val");
+    if (size) run.size = Number(size);
+    const name = pick(rPr, "rFont")?.getAttribute("val");
+    if (name) run.name = name;
+    out.push(run);
+  }
+  if (runCache.size > 2000) runCache.clear();
+  runCache.set(runs, out);
+  return out;
+}
+
 /** A <color> element (rgb, theme or indexed, with an optional tint) as #rrggbb. */
 export function colorOf(el: Element | null | undefined, theme: string[]): string | undefined {
   if (!el) return undefined;
@@ -145,8 +192,10 @@ export function readTheme(xml: string | null): string[] {
   const value = (name: string) => {
     const el = Array.from(scheme.children).find((c) => c.localName === name);
     const color = el?.firstElementChild;
-    const hex = color?.getAttribute("val") ?? color?.getAttribute("lastClr");
-    return hex ? `#${hex.toUpperCase()}` : "#000000";
+    // A system colour (<a:sysClr val="windowText" lastClr="000000"/>) gives its colour in lastClr.
+    const system = color?.localName === "sysClr" ? (color.getAttribute("lastClr") ?? (color.getAttribute("val") === "window" ? "FFFFFF" : "000000")) : null;
+    const hex = system ?? color?.getAttribute("val");
+    return hex && /^[0-9A-Fa-f]{6}$/.test(hex) ? `#${hex.toUpperCase()}` : "#000000";
   };
   return ["lt1", "dk1", "lt2", "dk2", "accent1", "accent2", "accent3", "accent4", "accent5", "accent6", "hlink", "folHlink"].map(value);
 }

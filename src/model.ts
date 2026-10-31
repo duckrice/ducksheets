@@ -137,7 +137,14 @@ export interface Sheet {
   hiddenRows: Set<number>;
   /** Excel's other settings of a row or column (grouping, its style …) as XML attributes, kept as they were. */
   rowAttrs?: Map<number, string>;
+  /** Rows whose height (in rowHeights) Excel worked out to fit their text, not one set by hand: saved as such. */
+  autoRows?: Set<number>;
   colAttrs?: Map<number, string>;
+  /**
+   * Excel's sparklines (small charts in a cell), to draw: the cell, the data ("Sheet!A1:A9"), line or
+   * columns, and colour. The file keeps them as Excel wrote them.
+   */
+  sparklines?: { at: number; data: string; kind: "line" | "column" | "stacked"; color: string }[];
   /** Hidden from the sheet tabs, as Excel hides it ("veryHidden": only a macro can show it). */
   state?: "hidden" | "veryHidden";
   merges: Range[];

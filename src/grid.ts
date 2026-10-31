@@ -4,9 +4,9 @@
 // A transparent scrolling layer on top takes the mouse and gives scrollbars.
 
 import { Doc, selRange } from "./doc";
-import { CellError, MAX_COLS, MAX_ROWS, colName, inRange, key, mergeAt, type Range } from "./model";
+import { CellError, MAX_COLS, MAX_ROWS, colName, inRange, key, mergeAt, parseRange, type Range } from "./model";
 import { columnChars, formatValue } from "./numfmt";
-import { lookOf, type BorderSide } from "./xlsx/styles";
+import { lookOf, textRuns, type BorderSide } from "./xlsx/styles";
 import { conditionalEffects, readDxf, type CfEffect } from "./conditional";
 import { tableLook } from "./structured";
 
@@ -395,6 +395,34 @@ export class Grid {
           ctx.fill();
         }
       }
+    // Excel's sparklines: a small line or column chart of their data, filling the cell.
+    for (const spark of sheet.sparklines ?? []) {
+      const r = Math.floor(spark.at / MAX_COLS), c = spark.at % MAX_COLS;
+      if (!visibleRows.includes(r) || !visibleCols.includes(c)) continue;
+      const [, quoted, plain, ref] = /^(?:'((?:[^']|'')+)'|([^!]+))!(.+)$/.exec(spark.data) ?? [];
+      const si = this.doc.book.sheets.findIndex((s) => s.name === (quoted?.replace(/''/g, "'") ?? plain));
+      const range = parseRange(ref ?? "");
+      if (si < 0 || !range) continue;
+      const values: number[] = [];
+      for (let i = range.r1; i <= range.r2; i++) for (let j = range.c1; j <= range.c2; j++) {
+        const v = this.doc.calc.value(si, i, j);
+        if (typeof v === "number") values.push(v);
+      }
+      if (!values.length) continue;
+      const lo = Math.min(0, ...values), hi = Math.max(...values, lo + 1e-9);
+      const x0 = this.x(c) + 3, y0 = this.y(r) + 3, w = this.cols.size(c) - 6, h = this.rows.size(r) - 6;
+      const yOf = (v: number) => y0 + h - ((v - lo) / (hi - lo)) * h;
+      ctx.fillStyle = ctx.strokeStyle = spark.color;
+      if (spark.kind === "line") {
+        ctx.lineWidth = 1.25;
+        ctx.beginPath();
+        values.forEach((v, k) => (k ? ctx.lineTo : ctx.moveTo).call(ctx, x0 + (values.length > 1 ? (k * w) / (values.length - 1) : w / 2), yOf(v)));
+        ctx.stroke();
+      } else {
+        const band = w / values.length;
+        values.forEach((v, k) => ctx.fillRect(x0 + k * band + band * 0.15, Math.min(yOf(v), yOf(0)), band * 0.7, Math.max(1, Math.abs(yOf(v) - yOf(0)))));
+      }
+    }
     // Gridlines.
     ctx.strokeStyle = GRID_LINE;
     ctx.lineWidth = 1 / this.zoom;
@@ -585,9 +613,29 @@ export class Grid {
     ctx.beginPath();
     ctx.rect(clipLeft, box.y, clipRight - clipLeft, box.h);
     ctx.clip();
+    ctx.textBaseline = "alphabetic";
+    if (cell?.rich && value === text && !effect?.color && !linked) {
+      // Parts of the text formatted on their own ("Viktig:" bold and red), each drawn as it is.
+      const runs = textRuns(cell.rich, this.doc.book.styles.theme).map((run) => {
+        const f = { ...font, ...(run.bold !== undefined ? { bold: run.bold } : {}), ...(run.italic !== undefined ? { italic: run.italic } : {}), ...(run.underline !== undefined ? { underline: run.underline } : {}), ...(run.strike !== undefined ? { strike: run.strike } : {}) };
+        const px = ((run.size ?? font.size) * 4) / 3;
+        const runCss = `${f.italic ? "italic " : ""}${f.bold ? "bold " : ""}${px}px "${run.name ?? font.name}", "Segoe UI", sans-serif`;
+        return { run, f, px, css: runCss, w: this.measure(runCss, run.text) };
+      });
+      const total = runs.reduce((s, r) => s + r.w, 0);
+      let x = align === "right" ? box.x + box.w - pad - total : align === "center" ? box.x + (box.w - total) / 2 : box.x + pad;
+      for (const { run, f, px, css: runCss, w } of runs) {
+        ctx.font = runCss;
+        ctx.fillStyle = run.color ?? font.color ?? "#000000";
+        ctx.fillText(run.text, x, ty);
+        this.decorate(f, x, ty, w, px);
+        x += w;
+      }
+      ctx.restore();
+      return;
+    }
     ctx.font = css;
     ctx.fillStyle = shown.color ?? font.color ?? "#000000";
-    ctx.textBaseline = "alphabetic";
     ctx.fillText(text, tx, ty);
     this.decorate(font, tx, ty, width, size);
     ctx.restore();

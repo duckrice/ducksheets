@@ -132,7 +132,7 @@ function sheetDataXml(sheet: Sheet, index: number, calc: Calculator, strings: Sh
   const out: string[] = [];
   for (const r of [...rows.keys()].sort((a, b) => a - b)) {
     const height = sheet.rowHeights.get(r);
-    const attrs = `${height !== undefined ? ` ht="${Math.round(height * 0.75 * 100) / 100}" customHeight="1"` : ""}${sheet.hiddenRows.has(r) ? ' hidden="1"' : ""}${sheet.rowAttrs?.get(r) ?? ""}`;
+    const attrs = `${height !== undefined ? ` ht="${Math.round(height * 0.75 * 100) / 100}"${sheet.autoRows?.has(r) ? "" : ' customHeight="1"'}` : ""}${sheet.hiddenRows.has(r) ? ' hidden="1"' : ""}${sheet.rowAttrs?.get(r) ?? ""}`;
     const cells = rows
       .get(r)!
       .sort((a, b) => a - b)

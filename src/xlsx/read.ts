@@ -110,6 +110,15 @@ export async function readXlsx(bytes: Uint8Array): Promise<Workbook> {
     if (state === "hidden" || state === "veryHidden") sheet.state = state;
     await readCharts(zip, sheet);
     sheet.notes = await readNotes(zip, rel.path);
+    // shortcut: sparklines are only drawn; rows inserted here don't move their data range (Excel's copy is kept as written).
+    for (const group of text.split(/<x14:sparklineGroup\b/).slice(1)) {
+      const kind = /^[^>]*\btype="(column|stacked)"/.exec(group)?.[1] as "column" | "stacked" | undefined;
+      const color = /<x14:colorSeries\b[^>]*rgb="(?:FF)?([0-9A-Fa-f]{6})"/.exec(group)?.[1] ?? "376092";
+      for (const [, data, at] of group.matchAll(/<xm:f>([^<]+)<\/xm:f>\s*<xm:sqref>([A-Z]+\d+)<\/xm:sqref>/g)) {
+        const [r, c] = cellPos(at);
+        (sheet.sparklines ??= []).push({ at: key(r, c), data, kind: kind ?? "line", color: `#${color}` });
+      }
+    }
     const ws = new DOMParser().parseFromString(text, "application/xml").documentElement;
     sheet.links = await readLinks(zip, rel.path, ws);
     sheet.tables = await readTables(zip, rel.path, ws);
@@ -199,6 +208,11 @@ export function readSheet(name: string, text: string, strings: string[], theme: 
     nextRow = r + 1;
     if (r >= MAX_ROWS) continue;
     if (row.getAttribute("customHeight") === "1" || row.getAttribute("customHeight") === "true") sheet.rowHeights.set(r, Math.round((Number(row.getAttribute("ht")) * 4) / 3));
+    else if (row.getAttribute("ht") && Math.round((Number(row.getAttribute("ht")) * 4) / 3) !== sheet.defaultRowHeight) {
+      // A height Excel worked out for bigger text: shown, and saved again as Excel's own.
+      sheet.rowHeights.set(r, Math.round((Number(row.getAttribute("ht")) * 4) / 3));
+      (sheet.autoRows ??= new Set()).add(r);
+    }
     if (row.getAttribute("hidden") === "1" || row.getAttribute("hidden") === "true") sheet.hiddenRows.add(r);
     const extra = otherAttrs(row, ["r", "spans", "ht", "customHeight", "hidden"]);
     if (extra) (sheet.rowAttrs ??= new Map()).set(r, extra);

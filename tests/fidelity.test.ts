@@ -131,3 +131,42 @@ describe("drawn as Excel draws them", () => {
     expect([at(1)?.icon, at(2)?.icon, at(3)?.icon]).toEqual([{ kind: "arrow", level: 0 }, { kind: "arrow", level: 0.5 }, { kind: "arrow", level: 1 }]);
   });
 });
+
+describe("Excel's sparklines", () => {
+  it("are read to be drawn, and kept in the file as Excel wrote them", async () => {
+    const ext = '<extLst><ext uri="{05C60535-1F16-4fd2-B633-F4F36F0B64E0}" xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main"><x14:sparklineGroups xmlns:xm="http://schemas.microsoft.com/office/excel/2006/main"><x14:sparklineGroup type="column" displayEmptyCellsAs="gap"><x14:colorSeries rgb="FF376092"/><x14:sparklines><x14:sparkline><xm:f>Sheet1!B2:B4</xm:f><xm:sqref>C2</xm:sqref></x14:sparkline></x14:sparklines></x14:sparklineGroup></x14:sparklineGroups></ext></extLst>';
+    const book = await excelMade((part) => part("xl/worksheets/sheet1.xml", (xml) => xml.replace("</worksheet>", `${ext}</worksheet>`)));
+    expect(book.sheets[0].sparklines).toEqual([{ at: 1 * 16384 + 2, data: "Sheet1!B2:B4", kind: "column", color: "#376092" }]);
+    expect(await saved(book)).toContain("<xm:f>Sheet1!B2:B4</xm:f><xm:sqref>C2</xm:sqref>");
+  });
+});
+
+describe("Excel's theme", () => {
+  it("takes its text and background colours from the system colours' saved values (a title was drawn invisibly)", async () => {
+    const { readTheme } = await import("../src/xlsx/styles");
+    const theme = readTheme('<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:themeElements><a:clrScheme name="Office"><a:dk1><a:sysClr val="windowText" lastClr="000000"/></a:dk1><a:lt1><a:sysClr val="window" lastClr="FFFFFF"/></a:lt1><a:dk2><a:srgbClr val="0E2841"/></a:dk2><a:lt2><a:srgbClr val="E8E8E8"/></a:lt2><a:accent1><a:srgbClr val="156082"/></a:accent1></a:clrScheme></a:themeElements></a:theme>');
+    expect(theme.slice(0, 5)).toEqual(["#FFFFFF", "#000000", "#E8E8E8", "#0E2841", "#156082"]);
+  });
+});
+
+describe("row heights Excel worked out", () => {
+  it("are shown, and saved again as Excel's own (not as set by hand)", async () => {
+    const book = await excelMade((part) => part("xl/worksheets/sheet1.xml", (xml) => xml.replace('<row r="1">', '<row r="1" ht="21">')));
+    expect([book.sheets[0].rowHeights.get(0), book.sheets[0].autoRows?.has(0)]).toEqual([28, true]);
+    expect(await saved(book)).toMatch(/<row r="1" ht="21">/);
+    const doc = new Doc(book);
+    doc.setRowHeight([0], 40);
+    expect(await (await JSZip.loadAsync(await writeXlsx(doc.book, doc.calc))).file("xl/worksheets/sheet1.xml")!.async("string")).toMatch(/<row r="1" ht="30" customHeight="1">/);
+  });
+});
+
+describe("text with parts formatted on their own", () => {
+  it("is read into runs to draw: bold and red, then as the cell", async () => {
+    const { textRuns, DEFAULT_THEME } = await import("../src/xlsx/styles");
+    const runs = textRuns('<r><rPr><b/><sz val="11"/><color rgb="FFFF0000"/><rFont val="Aptos Narrow"/></rPr><t>Viktig:</t></r><r><rPr><sz val="11"/><color theme="1"/></rPr><t xml:space="preserve"> betal tilbake</t></r>', DEFAULT_THEME);
+    expect(runs).toEqual([
+      { text: "Viktig:", bold: true, color: "#FF0000", size: 11, name: "Aptos Narrow" },
+      { text: " betal tilbake", color: DEFAULT_THEME[1], size: 11 },
+    ]);
+  });
+});
