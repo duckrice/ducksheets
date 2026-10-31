@@ -26,10 +26,12 @@ excel("a summary in the real Excel", () => {
 $ErrorActionPreference = 'Stop'
 $xl = New-Object -ComObject Excel.Application
 $xl.Visible = $false; $xl.DisplayAlerts = $false
+# Excel can be busy a moment after opening (refreshing the PivotTables): ask again.
+function Retry($block) { for ($i = 0; $i -lt 40; $i++) { try { return & $block } catch { Start-Sleep -Milliseconds 500 } }; throw 'Excel stayed busy' }
 try {
-  $wb = $xl.Workbooks.Open('${file}')
-  $wb.Application.CalculateFull()
-  $out = @(2, 3, 4) | ForEach-Object { $s = $wb.Worksheets.Item($_); ,@(2, 3, 4, 5 | ForEach-Object { $s.Cells.Item($_, 2).Value2 }) }
+  $wb = Retry { $xl.Workbooks.Open('${file}') }
+  Retry { $wb.Application.CalculateFull() } | Out-Null
+  $out = Retry { @(2, 3, 4) | ForEach-Object { $s = $wb.Worksheets.Item($_); ,@(2, 3, 4, 5 | ForEach-Object { $s.Cells.Item($_, 2).Value2 }) } }
   $wb.Close($false)
   ConvertTo-Json -Compress -InputObject $out
 } finally { $xl.Quit() }`;

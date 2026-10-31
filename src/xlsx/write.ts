@@ -8,7 +8,7 @@ import type { Calculator } from "../calc";
 import { parse, print } from "../formula/parse";
 import { CellError, address, colOf, inRange, key, rangeAddress, rowOf, usedRange, type Range, type Scalar, type Sheet, type SheetTable, type Workbook } from "../model";
 import { formatValue } from "../numfmt";
-import { pxToWidth, readRels, relsPath, resolvePath } from "./read";
+import { pxToWidth, readRels, relsPath, resolvePath, siText } from "./read";
 import { lookOf, writeStyles } from "./styles";
 import { EMPTY_DRAWING, anchorXml, chartXml, pictureAnchorXml } from "./charts";
 import { chartData } from "../chartdata";
@@ -64,31 +64,42 @@ const SHEET_ORDER = [
 /** Puts a part in a worksheet at its proper place (replacing what was there), or removes it (xmlText null). */
 function setPart(doc: Document, name: string, xmlText: string | null) {
   const ws = doc.documentElement;
+  const parsed = xmlText === null ? null : xml(`<x xmlns="${MAIN}" xmlns:r="${REL}">${xmlText}</x>`);
+  // XML that doesn't parse would drop the part: the file's own copy is kept instead.
+  if (parsed?.getElementsByTagName("parsererror").length) {
+    console.warn(`DuckSheets: the sheet's ${name} couldn't be written; the file's own is kept`);
+    return;
+  }
   for (const el of Array.from(ws.children)) if (el.localName === name) ws.removeChild(el);
-  if (xmlText === null) return;
+  if (!parsed) return;
   const at = SHEET_ORDER.indexOf(name);
   const after = Array.from(ws.children).find((el) => SHEET_ORDER.indexOf(el.localName) > at);
   // Some parts come several times in a row (conditionalFormatting).
-  for (const fragment of Array.from(xml(`<x xmlns="${MAIN}" xmlns:r="${REL}">${xmlText}</x>`).documentElement.children)) ws.insertBefore(doc.importNode(fragment, true), after ?? null);
+  for (const fragment of Array.from(parsed.documentElement.children)) ws.insertBefore(doc.importNode(fragment, true), after ?? null);
 }
 
 class SharedStrings {
-  list: string[] = [];
+  list: { text: string; rich?: string }[] = [];
   private index = new Map<string, number>();
-  add(s: string): number {
-    let i = this.index.get(s);
+  /** A text's number in the list; `rich` is its runs of formatted text, as read from a file. */
+  add(s: string, rich?: string): number {
+    const id = rich ? `\u0000${rich}` : s;
+    let i = this.index.get(id);
     if (i === undefined) {
       i = this.list.length;
-      this.list.push(s);
-      this.index.set(s, i);
+      this.list.push({ text: s, rich });
+      this.index.set(id, i);
     }
     return i;
   }
   xml(): string {
-    const items = this.list.map((s) => `<si><t${/^\s|\s$|\n/.test(s) ? ' xml:space="preserve"' : ""}>${escText(s)}</t></si>`).join("");
+    const items = this.list.map(({ text: s, rich }) => (rich ? `<si>${rich}</si>` : `<si><t${/^\s|\s$|\n/.test(s) ? ' xml:space="preserve"' : ""}>${escText(s)}</t></si>`)).join("");
     return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<sst xmlns="${MAIN}" count="${this.list.length}" uniqueCount="${this.list.length}">${items}</sst>`;
   }
 }
+
+/** The text of a shared string's runs (without phonetic guides). */
+const richText = (runs: string) => siText(xml(`<si xmlns="${MAIN}">${runs}</si>`).documentElement);
 
 function valueXml(v: Scalar, strings: SharedStrings, formula: boolean): { t: string; v: string } | null {
   if (v === null || v === undefined) return null;
@@ -103,8 +114,9 @@ function sheetDataXml(sheet: Sheet, index: number, calc: Calculator, strings: Sh
   const spillRefs = new Map<number, string>();
   const spilled = new Map<number, Scalar>();
   for (const [k, cell] of sheet.cells) {
-    if (cell.f === undefined || !ARRAY_FUNCTIONS.test(cell.f)) continue;
-    const block = calc.spillRange(index, rowOf(k), colOf(k));
+    if (cell.f === undefined || !(cell.dyn || ARRAY_FUNCTIONS.test(cell.f))) continue;
+    // A dynamic array from Excel that gives one value stays one, in its own cell.
+    const block = calc.spillRange(index, rowOf(k), colOf(k)) ?? (cell.dyn ? { r1: rowOf(k), c1: colOf(k), r2: rowOf(k), c2: colOf(k) } : undefined);
     if (!block) continue;
     spillRefs.set(k, rangeAddress(block));
     for (let r = block.r1; r <= block.r2; r++) for (let c = block.c1; c <= block.c2; c++) if (key(r, c) !== k) spilled.set(key(r, c), calc.value(index, r, c));
@@ -116,11 +128,11 @@ function sheetDataXml(sheet: Sheet, index: number, calc: Calculator, strings: Sh
     if (!list) rows.set(r, (list = []));
     list.push(k);
   }
-  for (const r of [...sheet.rowHeights.keys(), ...sheet.hiddenRows]) if (!rows.has(r)) rows.set(r, []);
+  for (const r of [...sheet.rowHeights.keys(), ...sheet.hiddenRows, ...(sheet.rowAttrs?.keys() ?? [])]) if (!rows.has(r)) rows.set(r, []);
   const out: string[] = [];
   for (const r of [...rows.keys()].sort((a, b) => a - b)) {
     const height = sheet.rowHeights.get(r);
-    const attrs = `${height !== undefined ? ` ht="${Math.round(height * 0.75 * 100) / 100}" customHeight="1"` : ""}${sheet.hiddenRows.has(r) ? ' hidden="1"' : ""}`;
+    const attrs = `${height !== undefined ? ` ht="${Math.round(height * 0.75 * 100) / 100}" customHeight="1"` : ""}${sheet.hiddenRows.has(r) ? ' hidden="1"' : ""}${sheet.rowAttrs?.get(r) ?? ""}`;
     const cells = rows
       .get(r)!
       .sort((a, b) => a - b)
@@ -145,6 +157,8 @@ function sheetDataXml(sheet: Sheet, index: number, calc: Calculator, strings: Sh
           const fXml = spill ? `<f t="array" ref="${spill}">${escText(f)}</f>` : `<f>${escText(f)}</f>`;
           return `<c r="${ref}"${s}${cached?.t ?? ""}${spill ? ' cm="1"' : ""}>${fXml}${cached ? `<v>${cached.v}</v>` : ""}</c>`;
         }
+        // Text with formatted parts keeps them while it is still the same text.
+        if (cell.rich && typeof cell.v === "string" && richText(cell.rich) === cell.v) return `<c r="${ref}"${s} t="s"><v>${strings.add(cell.v, cell.rich)}</v></c>`;
         const v = valueXml(cell.v ?? null, strings, false);
         return v ? `<c r="${ref}"${s}${v.t}><v>${v.v}</v></c>` : `<c r="${ref}"${s}/>`;
       })
@@ -155,16 +169,18 @@ function sheetDataXml(sheet: Sheet, index: number, calc: Calculator, strings: Sh
 }
 
 function colsXml(sheet: Sheet): string | null {
-  const columns = [...new Set([...sheet.colWidths.keys(), ...sheet.hiddenCols])].sort((a, b) => a - b);
+  const columns = [...new Set([...sheet.colWidths.keys(), ...sheet.hiddenCols, ...(sheet.colAttrs?.keys() ?? [])])].sort((a, b) => a - b);
   if (!columns.length) return null;
   const parts: string[] = [];
+  // Neighbours with the same width, hiding and other settings are written as one.
+  const look = (c: number) => `${sheet.colWidths.get(c) ?? ""}|${sheet.hiddenCols.has(c)}|${sheet.colAttrs?.get(c) ?? ""}`;
   for (let i = 0; i < columns.length; ) {
     const c = columns[i];
     const width = sheet.colWidths.get(c) ?? sheet.defaultColWidth;
     const hidden = sheet.hiddenCols.has(c);
     let j = i;
-    while (j + 1 < columns.length && columns[j + 1] === columns[j] + 1 && (sheet.colWidths.get(columns[j + 1]) ?? sheet.defaultColWidth) === width && sheet.hiddenCols.has(columns[j + 1]) === hidden) j++;
-    parts.push(`<col min="${c + 1}" max="${columns[j] + 1}" width="${pxToWidth(width)}" customWidth="1"${hidden ? ' hidden="1"' : ""}/>`);
+    while (j + 1 < columns.length && columns[j + 1] === columns[j] + 1 && look(columns[j + 1]) === look(c)) j++;
+    parts.push(`<col min="${c + 1}" max="${columns[j] + 1}" width="${pxToWidth(width)}"${sheet.colWidths.has(c) ? ' customWidth="1"' : ""}${hidden ? ' hidden="1"' : ""}${sheet.colAttrs?.get(c) ?? ""}/>`);
     i = j + 1;
   }
   return `<cols>${parts.join("")}</cols>`;
@@ -412,7 +428,7 @@ export async function writeXlsx(book: Workbook, calc: Calculator, active = 0): P
     zip.file(path, sheetXml(out, i, calc, strings, i === active, drawing, legacy, links, tables));
     override(path, CONTENT.sheet);
     const id = addRel(TYPE.sheet, path);
-    sheetEls.push(`<sheet name="${esc(sheet.name)}" sheetId="${i + 1}" r:id="${id}"/>`);
+    sheetEls.push(`<sheet name="${esc(sheet.name)}" sheetId="${i + 1}"${sheet.state ? ` state="${sheet.state}"` : ""} r:id="${id}"/>`);
   }
   // Sheets deleted here go, with their relationship.
   for (const el of relEls()) {
@@ -473,7 +489,7 @@ export async function writeXlsx(book: Workbook, calc: Calculator, active = 0): P
   }
 
   // Dynamic arrays need Excel's metadata saying cm="1" means "a dynamic array"; a file's own is kept.
-  const spilling = book.sheets.some((s, i) => [...s.cells].some(([k, cell]) => cell.f !== undefined && ARRAY_FUNCTIONS.test(cell.f) && !!calc.spillRange(i, rowOf(k), colOf(k))));
+  const spilling = book.sheets.some((s, i) => [...s.cells].some(([k, cell]) => cell.f !== undefined && (cell.dyn || (ARRAY_FUNCTIONS.test(cell.f) && !!calc.spillRange(i, rowOf(k), colOf(k))))));
   if (spilling && !relEls().some((el) => el.getAttribute("Type") === TYPE.metadata)) {
     const path = `${dir}metadata.xml`;
     zip.file(path, DYNAMIC_ARRAY_METADATA);

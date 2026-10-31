@@ -44,6 +44,8 @@ export interface CfStyle {
 export interface CfEffect extends CfStyle {
   /** A data bar: how far across the cell (0 to 1), and its colour. */
   bar?: { frac: number; color: string };
+  /** An icon of an icon set: its kind (arrows, circles …), and how good the value is, 0 (lowest) to 1 (highest). */
+  icon?: { kind: "arrow" | "circle" | "flag"; level: number };
 }
 
 // ---- formats (dxfs) --------------------------------------------------------------------------
@@ -183,7 +185,8 @@ export function conditionalXml(blocks: CfBlock[]): string | null {
           case "bar":
             return `<cfRule type="dataBar" priority="${p}"><dataBar><cfvo type="min"/><cfvo type="max"/><color rgb="${hex(rule.color)}"/></dataBar></cfRule>`;
           case "other":
-            return rule.xml.replace(/\spriority="\d+"/, ` priority="${p}"`).replace(/\sxmlns(:\w+)?="[^"]*"/g, "");
+            // Only the sheet's own namespace goes: a prefixed one (x14 in a data bar's extension) is still needed.
+            return rule.xml.replace(/\spriority="\d+"/, ` priority="${p}"`).replace(/\sxmlns="[^"]*"/g, "");
         }
       });
       return `<conditionalFormatting sqref="${block.ranges.map(rangeAddress).join(" ")}">${rules.join("")}</conditionalFormatting>`;
@@ -241,7 +244,30 @@ export function conditionalEffects(sheet: Sheet, index: number, calc: Calculator
     const numbers = [...values.values()].filter(isNum).sort((a, b) => a - b);
     const top = block.ranges[0];
     for (const rule of block.rules) {
-      if (rule.t === "other") continue;
+      if (rule.t === "other") {
+        // Excel's data bars (with their Excel 2010 part) and icon sets: drawn, and kept in the file as they are.
+        if (!numbers.length) continue;
+        const min = numbers[0];
+        const max = numbers[numbers.length - 1];
+        const at = (v: number) => (max === min ? 1 : (v - min) / (max - min));
+        if (/^<cfRule[^>]*type="dataBar"/.test(rule.xml)) {
+          const color = /<color rgb="(?:FF)?([0-9A-Fa-f]{6})"/.exec(rule.xml)?.[1];
+          for (const [k, v] of values) if (isNum(v) && !style(k).bar) style(k).bar = { frac: 0.1 + 0.9 * at(v), color: `#${color ?? "638EC6"}` };
+        } else if (/^<cfRule[^>]*type="iconSet"/.test(rule.xml)) {
+          const set = /<iconSet[^>]*iconSet="([^"]+)"/.exec(rule.xml)?.[1] ?? "3TrafficLights1";
+          const kind = /Arrows/.test(set) ? "arrow" : /Flags/.test(set) ? "flag" : "circle";
+          // The thresholds, as percents of the way from the lowest to the highest value (Excel's default kind).
+          const cuts = [...rule.xml.matchAll(/<cfvo type="(percent|num|percentile)" val="([^"]+)"/g)].map((m) => (m[1] === "num" ? Number(m[2]) : m[1] === "percentile" ? percentile(numbers, Number(m[2]) / 100) : min + ((max - min) * Number(m[2])) / 100));
+          const reversed = /reverse="1"/.test(rule.xml);
+          for (const [k, v] of values) {
+            if (!isNum(v) || style(k).icon) continue;
+            const step = cuts.filter((c) => v >= c).length - 1;
+            const level = cuts.length > 1 ? Math.max(0, step) / (cuts.length - 1) : 1;
+            style(k).icon = { kind, level: reversed ? 1 - level : level };
+          }
+        }
+        continue;
+      }
       if (rule.t === "scale" || rule.t === "bar") {
         if (!numbers.length) continue;
         const min = numbers[0];

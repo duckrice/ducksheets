@@ -7,7 +7,8 @@ import { type Range, type SheetTable, type Workbook } from "./model";
 import { columnNames } from "./xlsx/tables";
 
 /** The table's totals rows, as its XML says (none for tables made here). */
-export const totalsRows = (table: SheetTable) => Number(/\btotalsRowCount="(\d+)"/.exec(table.xml?.split(">")[0] ?? "")?.[1] ?? 0);
+// (In the <table> tag itself: a file's part starts with the <?xml?> declaration.)
+export const totalsRows = (table: SheetTable) => Number(/<table\b[^>]*\btotalsRowCount="(\d+)"/.exec(table.xml ?? "")?.[1] ?? 0);
 
 /** The table a cell is in. */
 export function tableAt(book: Workbook, sheet: number, r: number, c: number): SheetTable | undefined {

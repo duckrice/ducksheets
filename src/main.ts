@@ -215,7 +215,10 @@ function showSummary() {
 
 function showTabs() {
   tabs.replaceChildren(
-    ...doc.book.sheets.map((sheet, i) => {
+    ...doc.book.sheets.flatMap((sheet, i) => {
+      // A hidden sheet has no tab; right-click a tab → Unhide shows it.
+      if (sheet.state) return [];
+      const hiddenSheets = doc.book.sheets.map((s, j) => [s, j] as const).filter(([s]) => s.state === "hidden");
       const tab = h("button", { type: "button", class: `sheet-tab${i === doc.active ? " active" : ""}`, role: "tab", "aria-selected": String(i === doc.active), title: "Double-click to rename" }, sheet.name);
       tab.addEventListener("click", () => switchSheet(i));
       tab.addEventListener("dblclick", () => void renameSheet(i));
@@ -227,6 +230,8 @@ function showTabs() {
           { label: "Insert a new sheet", action: () => doc.addSheet() },
           { label: "Move left", action: () => doc.moveSheet(i, i - 1), ...(i === 0 ? { items: [] } : {}) },
           { label: "Move right", action: () => doc.moveSheet(i, i + 1), ...(i === doc.book.sheets.length - 1 ? { items: [] } : {}) },
+          { label: "Hide", action: () => doc.setSheetHidden(i, true), ...(doc.book.sheets.filter((s) => !s.state).length < 2 ? { items: [] } : {}) },
+          { label: "Unhide", items: hiddenSheets.map(([s, j]) => ({ label: s.name, action: () => doc.setSheetHidden(j, false) })) },
           { label: "Delete", danger: true, action: () => doc.deleteSheet(i), ...(doc.book.sheets.length < 2 ? { items: [] } : {}) },
         ]);
       });

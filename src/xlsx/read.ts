@@ -57,6 +57,18 @@ export const pxToWidth = (px: number) => Math.trunc(((px - 0) / 7) * 256) / 256;
 
 export class NotAWorkbook extends Error {}
 
+/**
+ * An element's attributes other than `known`, as XML (' outlineLevel="1" s="3"'), or "" for none.
+ * Prefixed ones (x14ac:dyDescent) are left out: written back, they'd need their namespace declared.
+ */
+function otherAttrs(el: Element, known: string[]): string {
+  const esc = (v: string) => v.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+  return Array.from(el.attributes)
+    .filter((a) => !a.prefix && !known.includes(a.name))
+    .map((a) => ` ${a.name}="${esc(a.value)}"`)
+    .join("");
+}
+
 export async function readXlsx(bytes: Uint8Array): Promise<Workbook> {
   let zip: JSZip;
   try {
@@ -92,8 +104,10 @@ export async function readXlsx(bytes: Uint8Array): Promise<Workbook> {
     if (!rel || !rel.type.endsWith("/worksheet")) continue; // chart sheets aren't shown yet
     const text = await zip.file(rel.path)?.async("string");
     if (!text) continue;
-    const sheet = readSheet(el.getAttribute("name") ?? `Sheet${book.sheets.length + 1}`, text, strings, styles.theme);
+    const sheet = readSheet(el.getAttribute("name") ?? `Sheet${book.sheets.length + 1}`, text, strings.list, styles.theme, strings.rich);
     sheet.origin = { path: rel.path, xml: text };
+    const state = el.getAttribute("state");
+    if (state === "hidden" || state === "veryHidden") sheet.state = state;
     await readCharts(zip, sheet);
     sheet.notes = await readNotes(zip, rel.path);
     const ws = new DOMParser().parseFromString(text, "application/xml").documentElement;
@@ -108,15 +122,23 @@ export async function readXlsx(bytes: Uint8Array): Promise<Workbook> {
   return book;
 }
 
-function readSharedStrings(text: string | null): string[] {
-  if (!text) return [];
-  return Array.from(xml(text).getElementsByTagNameNS(MAIN, "si")).map((si) =>
-    // Plain text, or the runs of formatted text joined (their formatting isn't kept yet).
-    Array.from(si.getElementsByTagNameNS(MAIN, "t"))
-      .filter((t) => t.parentElement?.localName !== "rPh")
-      .map((t) => t.textContent ?? "")
-      .join(""),
-  );
+/** The text of a shared string: plain, or the runs of formatted text joined. */
+export const siText = (si: Element) =>
+  Array.from(si.getElementsByTagNameNS(MAIN, "t"))
+    .filter((t) => t.parentElement?.localName !== "rPh")
+    .map((t) => t.textContent ?? "")
+    .join("");
+
+/** The shared strings' texts, and for those with formatted parts (runs), their XML to write back. */
+function readSharedStrings(text: string | null): { list: string[]; rich: Map<number, string> } {
+  const rich = new Map<number, string>();
+  if (!text) return { list: [], rich };
+  const list = Array.from(xml(text).getElementsByTagNameNS(MAIN, "si")).map((si, i) => {
+    if (Array.from(si.children).some((el) => el.localName === "r"))
+      rich.set(i, Array.from(si.children).map((el) => new XMLSerializer().serializeToString(el).replace(/ xmlns="[^"]*"/g, "")).join(""));
+    return siText(si);
+  });
+  return { list, rich };
 }
 
 /** Reads "B12" quickly, without checks: cell references in files are well formed. */
@@ -139,7 +161,7 @@ function formulaText(text: string): string {
   }
 }
 
-export function readSheet(name: string, text: string, strings: string[], theme: string[] = []): Sheet {
+export function readSheet(name: string, text: string, strings: string[], theme: string[] = [], rich: Map<number, string> = new Map()): Sheet {
   const doc = xml(text);
   const sheet = newSheet(name);
   const ws = doc.documentElement;
@@ -159,9 +181,11 @@ export function readSheet(name: string, text: string, strings: string[], theme: 
       if (width && min === 0) sheet.defaultColWidth = widthToPx(Number(width));
       continue;
     }
+    const extra = otherAttrs(col, ["min", "max", "width", "customWidth", "hidden"]);
     for (let c = min; c <= max; c++) {
       if (width && col.getAttribute("customWidth") !== "0") sheet.colWidths.set(c, widthToPx(Number(width)));
       if (hidden) sheet.hiddenCols.add(c);
+      if (extra) (sheet.colAttrs ??= new Map()).set(c, extra);
     }
   }
 
@@ -176,6 +200,8 @@ export function readSheet(name: string, text: string, strings: string[], theme: 
     if (r >= MAX_ROWS) continue;
     if (row.getAttribute("customHeight") === "1" || row.getAttribute("customHeight") === "true") sheet.rowHeights.set(r, Math.round((Number(row.getAttribute("ht")) * 4) / 3));
     if (row.getAttribute("hidden") === "1" || row.getAttribute("hidden") === "true") sheet.hiddenRows.add(r);
+    const extra = otherAttrs(row, ["r", "spans", "ht", "customHeight", "hidden"]);
+    if (extra) (sheet.rowAttrs ??= new Map()).set(r, extra);
     let nextCol = 0;
     for (const c of kids(row, "c")) {
       const ref = c.getAttribute("r");
@@ -187,7 +213,11 @@ export function readSheet(name: string, text: string, strings: string[], theme: 
       const cell: Cell = {};
       if (s && s !== "0") cell.s = Number(s);
       let value: Scalar = null;
-      if (type === "s") value = strings[Number(vText)] ?? "";
+      if (type === "s") {
+        value = strings[Number(vText)] ?? "";
+        const runs = rich.get(Number(vText));
+        if (runs) cell.rich = runs;
+      }
       else if (type === "inlineStr") value = Array.from(c.getElementsByTagNameNS(MAIN, "t")).map((t) => t.textContent ?? "").join("");
       else if (type === "b") value = vText === "1";
       else if (type === "e") value = ERROR_CODES.has(vText ?? "") ? new CellError(vText as CellError["code"]) : new CellError("#VALUE!");
@@ -214,6 +244,7 @@ export function readSheet(name: string, text: string, strings: string[], theme: 
         } else if (fText) cell.f = formulaText(fText);
         const block = f.getAttribute("t") === "array" ? parseRange(f.getAttribute("ref") ?? "") : null;
         if (block && cell.f && ARRAY_FUNCTIONS.test(cell.f)) spills.push({ range: block, r, c: col });
+        if (block && cell.f && c.getAttribute("cm")) cell.dyn = true;
       }
       if (cell.f === undefined && value !== null) cell.v = value;
       if (cell.f !== undefined || cell.v !== undefined || cell.s !== undefined) sheet.cells.set(key(r, col), cell);

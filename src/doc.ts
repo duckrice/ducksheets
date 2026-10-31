@@ -516,6 +516,17 @@ export class Doc {
       }
       if (axis === "r") sheet.rowHeights = moved;
       else sheet.colWidths = moved;
+      // Excel's other row and column settings (grouping, styles) move with their row or column.
+      const attrs = axis === "r" ? sheet.rowAttrs : sheet.colAttrs;
+      if (attrs) {
+        const movedAttrs = new Map<number, string>();
+        for (const [i, a] of attrs) {
+          const j = move(i);
+          if (j !== null) movedAttrs.set(j, a);
+        }
+        if (axis === "r") sheet.rowAttrs = movedAttrs;
+        else sheet.colAttrs = movedAttrs;
+      }
       const hidden = axis === "r" ? sheet.hiddenRows : sheet.hiddenCols;
       const movedHidden = new Set([...hidden].map(move).filter((i): i is number => i !== null));
       if (axis === "r") sheet.hiddenRows = movedHidden;
@@ -639,6 +650,16 @@ export class Doc {
       this.active = Math.min(this.active, this.book.sheets.length - 1);
       // References to the deleted sheet become #REF!, as in Excel.
       this.rewriteFormulas((node) => mapSheetGone(node, gone));
+    });
+  }
+
+  /** Hides a sheet from the tabs, or shows it again, as Excel's Hide and Unhide. One sheet always stays shown. */
+  setSheetHidden(index: number, hidden: boolean) {
+    if (hidden && this.book.sheets.filter((s) => !s.state).length < 2) return;
+    this.change(() => {
+      this.book.sheets[index].state = hidden ? "hidden" : undefined;
+      if (hidden && this.active === index) this.active = this.book.sheets.findIndex((s) => !s.state);
+      if (!hidden) this.active = index;
     });
   }
 

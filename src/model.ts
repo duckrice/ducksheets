@@ -25,6 +25,10 @@ export interface Cell {
   f?: string;
   /** The style: an index into the workbook's cell formats. */
   s?: number;
+  /** Excel saved its formula as a dynamic array (IFS, SWITCH … that could return several values): kept so, or Excel adds "@". */
+  dyn?: boolean;
+  /** Its text with formatting of parts (some words bold), as Excel's shared string XML; used while the text is unchanged. */
+  rich?: string;
 }
 
 /** A block of cells, rows and columns counted from 0, both ends included. */
@@ -131,6 +135,11 @@ export interface Sheet {
   rowHeights: Map<number, number>;
   hiddenCols: Set<number>;
   hiddenRows: Set<number>;
+  /** Excel's other settings of a row or column (grouping, its style …) as XML attributes, kept as they were. */
+  rowAttrs?: Map<number, string>;
+  colAttrs?: Map<number, string>;
+  /** Hidden from the sheet tabs, as Excel hides it ("veryHidden": only a macro can show it). */
+  state?: "hidden" | "veryHidden";
   merges: Range[];
   /** Rows and columns kept in view at the top and left. */
   freeze: { rows: number; cols: number };

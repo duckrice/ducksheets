@@ -93,8 +93,11 @@ function sections(code: string): string[] {
 
 const formatCache = new Map<string, string[]>();
 
-/** Shows a value in a format code. */
-export function formatValue(value: Scalar, code: string, date1904 = false): Shown {
+/**
+ * Shows a value in a format code. `width` is the cell's width in characters: a "General" number is then
+ * shortened to fit, as Excel does (0,021743 in a narrow column, 0,0217434343 in a wide one).
+ */
+export function formatValue(value: Scalar, code: string, date1904 = false, width?: number): Shown {
   if (value === null || value === undefined) return { text: "" };
   if (value instanceof CellError) return { text: value.code };
   if (typeof value === "boolean") return { text: value ? "TRUE" : "FALSE" };
@@ -121,7 +124,67 @@ export function formatValue(value: Scalar, code: string, date1904 = false): Show
     section = parts[1];
     abs = true;
   } else if (value === 0 && parts.length >= 3) section = parts[2];
-  return render(section, abs ? Math.abs(value) : value, date1904);
+  return render(section, abs ? Math.abs(value) : value, date1904, undefined, width);
+}
+
+/** The width of a column of `px` pixels in characters of Calibri 11 (7 px a digit, 5 px of padding). */
+export const columnChars = (px: number) => Math.max(1, Math.floor((px - 5) / 7));
+
+/**
+ * A "General" number in a cell `width` characters wide: at most 11 characters, as Excel shows them,
+ * fewer decimals to fit, and an exponent when even the whole number doesn't fit.
+ */
+function generalIn(value: number, width: number): string {
+  const w = Math.min(11, width);
+  if (value === 0) return "0";
+  const abs = Math.abs(value);
+  const sign = value < 0 ? "-" : "";
+  const intDigits = abs >= 1 ? Math.floor(Math.log10(abs)) + 1 : 1;
+  if (abs < 1e11 && abs >= 1e-9 && intDigits + sign.length <= w) {
+    const decimals = Math.max(0, Math.min(20, w - intDigits - sign.length - 1));
+    const text = abs.toFixed(decimals).replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "");
+    if (Number(text) !== 0) return (sign + text).replace(".", locale.decimal);
+  }
+  // 1,23E+08: as many digits as fit beside the exponent.
+  const e = Math.floor(Math.log10(abs));
+  const expText = `E${e < 0 ? "-" : "+"}${String(Math.abs(e)).padStart(2, "0")}`;
+  const room = Math.max(0, w - sign.length - 1 - expText.length - 1);
+  const mantissa = (abs / 10 ** e).toFixed(Math.min(room, 14)).replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "");
+  // Rounding up to 10 (9,99… → 10) moves the exponent; toExponential handles that.
+  if (mantissa.startsWith("10")) return (sign + abs.toExponential(Math.min(room, 14)).replace(/\.?0+e/, "e").replace("e", "E").replace(/E([+-])(\d)$/, "E$10$2")).replace(".", locale.decimal);
+  return (sign + mantissa + expText).replace(".", locale.decimal);
+}
+
+/** A fraction format ("# ?/?", "?/8", "# ??/??"): the whole number, then the rest as the nearest fraction. */
+function fractionText(body: string, value: number): string | null {
+  const m = /^(.*?)(?:([#0?,]+)\s+)?([#0?]+)\s*\/\s*([#0?]+|\d+)(.*)$/.exec(body.replace(/"([^"]*)"/g, "$1"));
+  if (!m) return null;
+  const [, before, wholePart, numPart, denPart, after] = m;
+  const negative = value < 0;
+  let rest = Math.abs(value);
+  let whole = 0;
+  if (wholePart) {
+    whole = Math.floor(rest);
+    rest -= whole;
+  }
+  let num: number, den: number;
+  if (/^\d+$/.test(denPart)) {
+    den = Number(denPart);
+    num = Math.round(rest * den);
+  } else {
+    // The closest fraction with a denominator of at most as many digits as the format has.
+    const most = 10 ** denPart.length - 1;
+    [num, den] = [Math.round(rest), 1];
+    for (let d = 1; d <= most; d++) {
+      const n = Math.round(rest * d);
+      if (Math.abs(rest - n / d) < Math.abs(rest - num / den) - 1e-12) [num, den] = [n, d];
+    }
+  }
+  if (wholePart && num === den) [whole, num] = [whole + 1, 0];
+  const pad = (s: string, k: number) => s.padStart(k, " ");
+  const fraction = num === 0 && wholePart ? " ".repeat(numPart.length + 1 + denPart.length) : `${pad(String(num), numPart.length)}/${String(den).padEnd(denPart.length, " ")}`;
+  const wholeText = wholePart ? (whole || /0/.test(wholePart) ? String(whole) : "") : "";
+  return `${negative ? "-" : ""}${before}${wholeText}${wholePart ? " " : ""}${fraction}${after}`;
 }
 
 function general(value: number): string {
@@ -136,7 +199,7 @@ function general(value: number): string {
   return text.replace(".", locale.decimal);
 }
 
-function render(section: string, value: number, date1904: boolean, text?: string): Shown {
+function render(section: string, value: number, date1904: boolean, text?: string, width?: number): Shown {
   let color: string | undefined;
   let body = section.replace(/\[([^\]]*)\]/g, (whole, inner: string) => {
     const lower = inner.toLowerCase();
@@ -147,11 +210,15 @@ function render(section: string, value: number, date1904: boolean, text?: string
     return "";
   });
   if (text !== undefined) return { text: literal(body).replace(/@/g, text), color };
-  if (/^\s*general\s*$/i.test(body)) return { text: general(value), color };
+  if (/^\s*general\s*$/i.test(body)) return { text: width === undefined ? general(value) : generalIn(value, width), color };
   if (/^general/i.test(body.trim())) body = body.replace(/general/i, "");
   // Without quotes, is it a date or time?
   const bare = body.replace(/"[^"]*"/g, "").replace(/\\./g, "");
   if (/[dyhs]|\[h|AM\/PM|A\/P/i.test(bare) || (/m/i.test(bare) && !/[0#?]/.test(bare))) return { text: dateText(body, value, date1904), color };
+  if (/[#0?]\s*\/\s*[#0?\d]/.test(bare)) {
+    const fraction = fractionText(body, value);
+    if (fraction !== null) return { text: fraction, color };
+  }
   return { text: numberText(body, value), color };
 }
 

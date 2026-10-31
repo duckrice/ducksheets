@@ -5,7 +5,7 @@
 
 import { Doc, selRange } from "./doc";
 import { CellError, MAX_COLS, MAX_ROWS, colName, inRange, key, mergeAt, type Range } from "./model";
-import { formatValue } from "./numfmt";
+import { columnChars, formatValue } from "./numfmt";
 import { lookOf, type BorderSide } from "./xlsx/styles";
 import { conditionalEffects, readDxf, type CfEffect } from "./conditional";
 import { tableLook } from "./structured";
@@ -376,6 +376,24 @@ export class Grid {
           ctx.fillRect(this.x(c) + 2, this.y(r) + 3, Math.max(1, (this.cols.size(c) - 4) * effect.bar.frac), this.rows.size(r) - 6);
           ctx.globalAlpha = 1;
         }
+        if (effect?.icon) {
+          // At the left of the cell, as Excel draws them: red for the lowest third, yellow, green for the highest.
+          const { kind, level } = effect.icon;
+          const colour = level >= 0.67 ? "#3DA45C" : level >= 0.33 ? "#F5B800" : "#D9433A";
+          const size = Math.min(12, this.rows.size(r) - 6);
+          const x = this.x(c) + 3, y = this.y(r) + (this.rows.size(r) - size) / 2;
+          ctx.fillStyle = colour;
+          ctx.beginPath();
+          if (kind === "arrow") {
+            // Up, across or down, as the value is high, middling or low.
+            const dir = level >= 0.67 ? -1 : level >= 0.33 ? 0 : 1;
+            const cx = x + size / 2, cy = y + size / 2;
+            if (dir === 0) ctx.moveTo(x + size, cy), ctx.lineTo(x + size / 2, y), ctx.lineTo(x + size / 2, y + size);
+            else ctx.moveTo(cx, dir < 0 ? y : y + size), ctx.lineTo(x + size, cy), ctx.lineTo(x, cy);
+          } else if (kind === "flag") ctx.rect(x + 2, y, size - 3, size / 2);
+          else ctx.arc(x + size / 2, y + size / 2, size / 2, 0, Math.PI * 2);
+          ctx.fill();
+        }
       }
     // Gridlines.
     ctx.strokeStyle = GRID_LINE;
@@ -511,7 +529,9 @@ export class Grid {
     const value = this.doc.value(r, c);
     if (value === null) return;
     const look = lookOf(this.doc.book.styles, cell?.s);
-    const shown = this.showFormulas && cell?.f !== undefined ? { text: `=${cell.f}` } as ReturnType<typeof formatValue> : formatValue(value, look.numFmt, this.doc.book.date1904);
+    // A "General" number fits its cell, as in Excel (fewer decimals in a narrow column).
+    const chars = columnChars(merge ? this.x(merge.c2) + this.cols.size(merge.c2) - this.x(merge.c1) : this.cols.size(c));
+    const shown = this.showFormulas && cell?.f !== undefined ? { text: `=${cell.f}` } as ReturnType<typeof formatValue> : formatValue(value, look.numFmt, this.doc.book.date1904, chars);
     if (!shown.text) return;
     const ctx = this.ctx;
     const effect = this.effects.get(key(r, c));
